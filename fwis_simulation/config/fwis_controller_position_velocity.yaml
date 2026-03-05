@@ -1,0 +1,31 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 100
+    use_sim_time: true
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    forward_position_controller:
+      type: forward_command_controller/ForwardCommandController
+
+    forward_velocity_controller:
+      type: forward_command_controller/ForwardCommandController
+
+forward_position_controller:
+  ros__parameters:
+    joints:
+      - drive1_axis_joint
+      - drive2_axis_joint
+      - drive3_axis_joint
+      - drive4_axis_joint
+    interface_name: position
+
+forward_velocity_controller:
+  ros__parameters:
+    joints:
+      - motor1_axis_joint
+      - motor2_axis_joint
+      - motor3_axis_joint
+      - motor4_axis_joint
+    interface_name: velocity

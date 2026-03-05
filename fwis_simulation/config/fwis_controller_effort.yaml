@@ -1,0 +1,23 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 100
+    use_sim_time: true
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    forward_effort_controller:
+      type: forward_command_controller/ForwardCommandController
+
+forward_effort_controller:
+  ros__parameters:
+    joints:
+      - motor1_axis_joint
+      - motor2_axis_joint
+      - motor3_axis_joint
+      - motor4_axis_joint
+      - drive1_axis_joint
+      - drive2_axis_joint
+      - drive3_axis_joint
+      - drive4_axis_joint
+    interface_name: effort

@@ -1,0 +1,5 @@
+<library path="fwis_straightline_planner_plugin">
+	<class name="fwis_straightline_planner/StraightLine" type="fwis_straightline_planner::StraightLine" base_class_type="nav2_core::GlobalPlanner">
+	  <description>This is a planner plugin which produces straight path.</description>
+	</class>
+</library>

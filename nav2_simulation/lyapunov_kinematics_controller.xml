@@ -1,0 +1,9 @@
+<class_libraries>
+    <library path="lyapunov_kinematics_controller">
+        <class type="lyapunov_kinematics_controller::LyapunovKinematicsController" base_class_type="nav2_core::Controller">
+            <description>
+                lyapunov_kinematics_controller
+            </description>
+        </class>
+    </library>
+</class_libraries>
