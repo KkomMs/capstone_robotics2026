@@ -7,6 +7,7 @@
 #include <cctype>
 #include <unordered_map>
 #include <chrono>
+#include <sstream>
 
 // Zebra Scanner SDK
 #include "zebra-scanner/CsBarcodeTypes.h"
@@ -76,7 +77,7 @@ static inline std::string ExtractTag(const std::string& xml, const std::string& 
 
 
 // =============================================================
-// "0xNN 0xNN ..." → ASCII 변환
+// "0xNN 0xNN ..." → ASCII 변환 (16진수)
 // =============================================================
 static inline bool LooksLikeHexBytes(const std::string& s)
 {
@@ -116,11 +117,76 @@ static std::string HexStringToAscii(const std::string& hex)
 
 
 // =============================================================
+//     "NN NN NN ..." raw hex (0x 없는 형식) → ASCII 변환
+//     예) "30 30 30 31 35 52 31 35" → "0015R15"
+// =============================================================
+static inline bool IsHexChar(char c)
+{
+    return isdigit((unsigned char)c) ||
+           ('a' <= tolower((unsigned char)c) && tolower((unsigned char)c) <= 'f');
+}
+
+static inline bool LooksLikeRawHexBytes(const std::string& s)
+{
+    if (s.empty()) return false;
+    std::istringstream iss(s);
+    std::string token;
+    int count = 0;
+    while (iss >> token) {
+        // 토큰이 정확히 2자리 16진수여야 함
+        if (token.size() != 2) return false;
+        if (!IsHexChar(token[0]) || !IsHexChar(token[1])) return false;
+        count++;
+    }
+    return (count >= 2);
+}
+
+static std::string RawHexToAscii(const std::string& s)
+{
+    std::string out;
+    std::istringstream iss(s);
+    std::string token;
+    while (iss >> token) {
+        if (token.size() == 2 && IsHexChar(token[0]) && IsHexChar(token[1])) {
+            int hi = HexNibble(token[0]);
+            int lo = HexNibble(token[1]);
+            if (hi >= 0 && lo >= 0)
+                out.push_back((char)((hi << 4) | lo));
+        }
+    }
+    return out;
+}
+
+
+// =============================================================
+//     통합 변환 함수
+//     우선순위: 0x-HEX → raw HEX → 원본
+// =============================================================
+static std::string DataLabelToString(const std::string& raw)
+{
+    // 1순위: "0xNN 0xNN" 형식
+    if (LooksLikeHexBytes(raw)) {
+        std::string ascii = HexStringToAscii(raw);
+        if (!ascii.empty()) return ascii;
+    }
+
+    // 2순위: "NN NN" raw hex 형식 (0x 없는 2자리 hex)
+    if (LooksLikeRawHexBytes(raw)) {
+        std::string ascii = RawHexToAscii(raw);
+        if (!ascii.empty()) return ascii;
+    }
+
+    // 3순위: 원본 그대로
+    return raw;
+}
+
+
+// =============================================================
 // 동작 튜닝 파라미터
 // =============================================================
 static const uint64_t kRearmCooldownMs  = 10;   // 재트리거 최소 간격 [ms]
-static const uint64_t kSameDataBlockMs  = 50;  // 같은 바코드 중복 차단 시간 [ms]
-static const uint64_t kKeepAlivePullMs  = 100;   // keep-alive pull 주기 [ms]
+static const uint64_t kSameDataBlockMs  = 50;   // 같은 바코드 중복 차단 시간 [ms]
+static const uint64_t kKeepAlivePullMs  = 100;  // keep-alive pull 주기 [ms]
 
 
 // =============================================================
@@ -200,12 +266,8 @@ public:
             return;
         }
 
-        // datalabel이 0xNN 형식이면 ASCII로 변환
-        std::string printable = data;
-        if (LooksLikeHexBytes(data)) {
-            std::string ascii = HexStringToAscii(data);
-            if (!ascii.empty()) printable = ascii;
-        }
+        // [핵심 변경] 통합 변환 함수 사용
+        std::string printable = DataLabelToString(data);
 
         // scannerID 파싱
         int sid = -1;
@@ -388,9 +450,9 @@ int main()
 {
     cout << "=== Barcode Scanner (Linux) - press 'q' to quit ===\n";
 
-    if (!OpenScanner())         return -1;
-    if (!GetScanners())       { Cleanup(); return -1; }
-    if (!EnableAll())         { Cleanup(); return -1; }
+    if (!OpenScanner())            return -1;
+    if (!GetScanners())          { Cleanup(); return -1; }
+    if (!EnableAll())            { Cleanup(); return -1; }
     if (!RegisterBarcodeEvent()) { Cleanup(); return -1; }
 
     // 최초 1회 트리거 ON
