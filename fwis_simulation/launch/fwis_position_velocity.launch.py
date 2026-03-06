@@ -22,7 +22,7 @@ def generate_launch_description():
     world_path = PathJoinSubstitution([
         FindPackageShare('fwis_simulation'),
         'worlds',
-        'demo_room.sdf'
+        'empty_world.sdf'
     ])
 
     set_gazebo_resource = AppendEnvironmentVariable(
@@ -64,10 +64,10 @@ def generate_launch_description():
         output='screen',
         arguments=['-topic', 'robot_description',
                    '-name', 'fwis',
-                   '-x', '3.6',
-                   '-y', '3.3',
+                #    '-x', '3.6',
+                #    '-y', '3.3',
                    '-z', '0.2',
-                   '-Y', '-1.5708',
+                #    '-Y', '-1.5708',
                    '-allow_renaming', 'true'],
     )
 

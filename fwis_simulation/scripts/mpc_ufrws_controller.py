@@ -19,14 +19,14 @@ class MpcUFRWSNode(Node):
         self.radius = 0.0695    # Wheel Radius [m]
 
         # --- MPC Parameters ---
-        self.V_ref = 0.3    # 목표 주행 속도 [m/s]
+        self.V_ref = 0.5    # 목표 주행 속도 [m/s]
         self.dt = 0.1       # 제어 주기 [10Hz]
         self.N = 10         # 예측 구간
-        self.max_steer = math.radians(180)   # 최대 조향각 [radian]
+        self.max_steer = math.radians(89.9)   # 최대 조향각 [radian]
 
         # Tuning Parameters
-        self.Q_y = 200.0        # 횡방향 오차 가중치
-        self.Q_phi = 5.0       # heading angle 오차 가중치
+        self.Q_y = 100.0        # 횡방향 오차 가중치
+        self.Q_phi = 10.0       # heading angle 오차 가중치
         self.R_u = 0.1          # 조향각 크기 가중치
         self.R_delta = 5.0     # 조향각 변화량(제어 증분) 가중치
 
@@ -81,6 +81,9 @@ class MpcUFRWSNode(Node):
             x_r, y_r, theta_r = self.lane_length - self.V_ref * (t_cycle - (t_horz + t_vert)), self.row_width, math.pi
         else:
             x_r, y_r, theta_r = 0.0, self.row_width + self.V_ref * (t_cycle - (2 * t_horz + t_vert)), math.pi / 2.0
+
+        # 차체 방향 고정
+        #theta_r = 0.0
 
         return x_r, y_r + y_offset_base, theta_r
     
@@ -166,14 +169,40 @@ class MpcUFRWSNode(Node):
         d3 = math.atan(tan_dr / (1.0 - denom_diff)) if abs(1.0 - denom_diff) > 1e-5 else 0.0
         d4 = math.atan(tan_dr / (1.0 + denom_diff)) if abs(1.0 + denom_diff) > 1e-5 else 0.0
 
-        # 4. 각 바퀴 속도 (모든 바퀴가 근사적으로 목표 속도 v_ref 낸다고 가정)
-        # 회전 반경 R을 구해 개별 바퀴 속도 제어 가능
-        rad_speed = self.V_ref / self.radius
+        # 4. 각 바퀴 속도 계산
+        # rad_speed = self.V_ref / self.radius
+
+        if abs(tan_df - tan_dr) < 1e-3:
+            v1 = v2 = v3 = v4 = self.V_ref
+        else:
+            # 로컬 좌표계 기준 ICR 좌표
+            Y_c = self.L / (tan_df - tan_dr)
+            X_c = (-self.Lf * tan_dr - self.Lr * tan_df) / (tan_df - tan_dr)
+
+            # 로봇 중심에서 ICR까지 거리
+            R_M = math.hypot(X_c, Y_c)
+
+            # 각 바퀴에서 ICR까지의 거리 [FL, FR, RL, RR]
+            R_1 = math.hypot(self.Lf - X_c, self.W / 2.0 - Y_c)
+            R_2 = math.hypot(self.Lf - X_c, -self.W / 2.0 - Y_c)
+            R_3 = math.hypot(-self.Lr - X_c, self.W / 2.0 - Y_c)
+            R_4 = math.hypot(-self.Lr - X_c, -self.W / 2.0 - Y_c)
+
+            v1 = self.V_ref * (R_1 / R_M)
+            v2 = self.V_ref * (R_2 / R_M)
+            v3 = self.V_ref * (R_3 / R_M)
+            v4 = self.V_ref * (R_4 / R_M)
+        
+        # 선속도를 바퀴 각속도로 변환
+        rad1 = v1 / self.radius
+        rad2 = v2 / self.radius
+        rad3 = v3 / self.radius
+        rad4 = v4 / self.radius
 
         # 5. Publish Commands
         # Drive (Velocity)
         msg_drive = Float64MultiArray()
-        msg_drive.data = [float(rad_speed)] * 4
+        msg_drive.data = [float(rad1), float(rad2), float(rad3), float(rad4)]
         self.pub_drive.publish(msg_drive)
         
         # Steering (Position)

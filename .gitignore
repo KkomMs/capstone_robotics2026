@@ -1,3 +1,11 @@
+# 에디터 설정
 .vscode/
-fwis_simulation/.vscode/
-nav2_simulation/.vscode/
+
+# Python 임시/캐시 파일
+__pycache__/
+*.pyc
+
+# C/C++ 빌드 관련 찌꺼기 (혹시 src 내부에서 빌드될 경우)
+*.o
+*.so
+*.out
