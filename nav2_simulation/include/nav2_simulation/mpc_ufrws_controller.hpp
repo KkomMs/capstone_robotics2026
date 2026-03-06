@@ -63,6 +63,17 @@ struct WheelAngles
   double rr = 0.0;  ///< Rear-Right  조향각 [rad]
 };
 
+/**
+ * @brief 4WS 차량의 개별 바퀴 속도
+ */
+struct WheelVelocities
+{
+  double fl = 0.0;
+  double fr = 0.0;
+  double rl = 0.0;
+  double rr = 0.0;
+};
+
 // ── 컨트롤러 클래스 ────────────────────────────────────────────────────────────
 
 /**
@@ -229,18 +240,16 @@ protected:
   // ── 4WS Ackermann 기하학 ────────────────────────────────────────────────────
 
   /**
-   * @brief 전/후륜 등가 조향각 → 개별 4바퀴 조향각 변환 (논문 Eq.1)
+   * @brief 전/후륜 조향각 및 바퀴 속도 계산
    *
-   * tan δ_fl = tan δf / (1 - W/(2L)·(tan δf - tan δr))
-   * tan δ_fr = tan δf / (1 + W/(2L)·(tan δf - tan δr))
-   * tan δ_rl = tan δr / (1 - W/(2L)·(tan δf - tan δr))
-   * tan δ_rr = tan δr / (1 + W/(2L)·(tan δf - tan δr))
+   * UFRWS 모델의 개별 조향각 및 ICR 개념을 이용한 바퀴 속도 계산
    */
   WheelAngles computeWheelAngles(double delta_f, double delta_r) const;
+  WheelVelocities computeWheelVelocities(double delta_f, double delta_r) const;
 
   // ── 발행 ────────────────────────────────────────────────────────────────────
 
-  void publishWheelCommands(const WheelAngles & wheels, double v_ref);
+  void publishWheelCommands(const WheelAngles & steer, const WheelVelocities & vel);
 
   // ── 좌표 변환 ───────────────────────────────────────────────────────────────
 

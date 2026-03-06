@@ -170,8 +170,6 @@ class MpcUFRWSNode(Node):
         d4 = math.atan(tan_dr / (1.0 + denom_diff)) if abs(1.0 + denom_diff) > 1e-5 else 0.0
 
         # 4. 각 바퀴 속도 계산
-        # rad_speed = self.V_ref / self.radius
-
         if abs(tan_df - tan_dr) < 1e-3:
             v1 = v2 = v3 = v4 = self.V_ref
         else:

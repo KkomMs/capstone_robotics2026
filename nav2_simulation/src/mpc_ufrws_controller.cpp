@@ -327,11 +327,12 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   u0_[u0_.size() - 2] = 0.0;
   u0_[u0_.size() - 1] = 0.0;
 
-  // ── 5. Ackermann 기하학: 개별 바퀴 조향각 계산 (논문 Eq.1) ──────────────
-  const WheelAngles wheels = computeWheelAngles(delta_f, delta_r);
+  // ── 5. 개별 바퀴 조향각 및 속도 계산 ────────────────────────────────────────
+  const WheelAngles steer = computeWheelAngles(delta_f, delta_r);
+  const WheelVelocities vel = computeWheelVelocities(delta_f, delta_r);
 
   // ── 6. 바퀴 명령 발행 ────────────────────────────────────────────────────
-  publishWheelCommands(wheels, V_ref_);
+  publishWheelCommands(steer, vel);
 
   // ── 7. Nav2 표준 TwistStamped 반환 ───────────────────────────────────────
   // 등가 yaw rate: ω = V·cos((δf+δr)/2) / L · (δf - δr)  (논문 Eq.6에서 유도)
@@ -522,25 +523,25 @@ std::vector<VehicleState> MpcUFRWSController::generateReferenceTrajectory(
     ref.x = poses[sel_idx].pose.position.x;
     ref.y = poses[sel_idx].pose.position.y;
 
-    // 헤딩: 쿼터니언에서 추출 (경로 생성기가 설정한 값)
-    const auto & q = poses[sel_idx].pose.orientation;
-    ref.theta = std::atan2(
-      2.0 * (q.w * q.z + q.x * q.y),
-      1.0 - 2.0 * (q.y * q.y + q.z * q.z));
-
-    // 쿼터니언 헤딩이 설정되지 않은 경우 인접점으로 보정
+    // 헤딩: 플래너의 쿼터니언을 무시하고, 경로점 사이의 벡터(dx, dy)로 직접 계산
     if (sel_idx + 1 < n_poses) {
+      // 다음 점이 있다면 전진 방향(Forward Difference)
       const double fw_dx = poses[sel_idx + 1].pose.position.x - poses[sel_idx].pose.position.x;
       const double fw_dy = poses[sel_idx + 1].pose.position.y - poses[sel_idx].pose.position.y;
       if (std::hypot(fw_dx, fw_dy) > 1e-5) {
         ref.theta = std::atan2(fw_dy, fw_dx);
       }
     } else if (sel_idx > 0) {
+      // 마지막 점이라면 이전 점과의 방향(Backward Difference) 유지
       const double bk_dx = poses[sel_idx].pose.position.x - poses[sel_idx - 1].pose.position.x;
       const double bk_dy = poses[sel_idx].pose.position.y - poses[sel_idx - 1].pose.position.y;
       if (std::hypot(bk_dx, bk_dy) > 1e-5) {
         ref.theta = std::atan2(bk_dy, bk_dx);
       }
+    } else {
+      // 점이 1개밖에 없다면 어쩔 수 없이 쿼터니언 사용 (거의 발생하지 않음)
+      const auto & q = poses[sel_idx].pose.orientation;
+      ref.theta = std::atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z));
     }
 
     ref_seq.push_back(ref);
@@ -551,8 +552,7 @@ std::vector<VehicleState> MpcUFRWSController::generateReferenceTrajectory(
 
 // ── Ackermann 기하학: 등가 조향각 → 개별 바퀴 조향각 (논문 Eq.1) ────────────
 
-WheelAngles MpcUFRWSController::computeWheelAngles(
-  double delta_f, double delta_r) const
+WheelAngles MpcUFRWSController::computeWheelAngles(double delta_f, double delta_r) const
 {
   const double tan_df  = std::tan(delta_f);
   const double tan_dr  = std::tan(delta_r);
@@ -581,22 +581,63 @@ WheelAngles MpcUFRWSController::computeWheelAngles(
   return w;
 }
 
+// ── 4WS 모델의 ICR을 이용한 개별 바퀴 속도 ────────────────────────────────────────
+
+WheelVelocities MpcUFRWSController::computeWheelVelocities(double delta_f, double delta_r) const
+{
+  const double tan_df = std::tan(delta_f);
+  const double tan_dr = std::tan(delta_r);
+  const double diff   = tan_df - tan_dr;
+
+  WheelVelocities wv;
+
+  // 직진 또는 완벽한 크랩 주행 (ICR이 무한대인 경우)
+  if (std::abs(diff) < 1e-5)
+  {
+    const double default_rad_speed = V_ref_ / wheel_radius_;
+    wv.fl = default_rad_speed;
+    wv.fr = default_rad_speed;
+    wv.rl = default_rad_speed;
+    wv.rr = default_rad_speed;
+  }
+  else
+  {
+    // 로컬 좌표계 기준 ICR (회전 중심) 좌표 계산
+    const double Y_c = L_ / diff;
+    const double X_c = (-Lf_ * tan_dr - Lr_ * tan_df) / diff;
+
+    // 로봇 중심(M)에서 ICR까지의 거리
+    const double R_M = std::hypot(X_c, Y_c);
+
+    // 각 바퀴의 장착 위치에서 ICR까지의 거리 계산
+    const double R_fl = std::hypot(Lf_ - X_c,  W_ / 2.0 - Y_c); // Front-Left
+    const double R_fr = std::hypot(Lf_ - X_c, -W_ / 2.0 - Y_c); // Front-Right
+    const double R_rl = std::hypot(-Lr_ - X_c, W_ / 2.0 - Y_c); // Rear-Left
+    const double R_rr = std::hypot(-Lr_ - X_c, -W_ / 2.0 - Y_c); // Rear-Right
+
+    // 선속도를 각속도[rad/s]로 변환하여 구조체에 저장 (v_i = V_ref * R_i / R_M)
+    wv.fl = (V_ref_ * (R_fl / R_M)) / wheel_radius_;
+    wv.fr = (V_ref_ * (R_fr / R_M)) / wheel_radius_;
+    wv.rl = (V_ref_ * (R_rl / R_M)) / wheel_radius_;
+    wv.rr = (V_ref_ * (R_rr / R_M)) / wheel_radius_;
+  }
+
+  return wv;
+}
+
 // ── 바퀴 명령 발행 ─────────────────────────────────────────────────────────────
 
-void MpcUFRWSController::publishWheelCommands(
-  const WheelAngles & wheels, double v_ref)
+void MpcUFRWSController::publishWheelCommands(const WheelAngles & steer, const WheelVelocities & vel)
 {
-  const double rad_speed = v_ref / wheel_radius_;  // [rad/s]
-
   // 조향각 위치 명령: [FL, FR, RL, RR]
   std_msgs::msg::Float64MultiArray steer_msg;
-  steer_msg.data = {wheels.fl, wheels.fr, wheels.rl, wheels.rr};
+  steer_msg.data = {steer.fl, steer.fr, steer.rl, steer.rr};
   pub_steer_->publish(steer_msg);
 
   // 구동 속도 명령: [FL, FR, RL, RR] — 등속 단순 가정
   // (정밀 제어 필요 시 각 바퀴의 ICR 기반 반경 계산으로 확장 가능)
   std_msgs::msg::Float64MultiArray drive_msg;
-  drive_msg.data = {rad_speed, rad_speed, rad_speed, rad_speed};
+  drive_msg.data = {vel.fl, vel.fr, vel.rl, vel.rr};
   pub_drive_->publish(drive_msg);
 }
 
@@ -642,5 +683,4 @@ bool MpcUFRWSController::transformPose(
 
 // ── Nav2 플러그인 등록 ─────────────────────────────────────────────────────────
 PLUGINLIB_EXPORT_CLASS(
-  mpc_ufrws_controller::MpcUFRWSController,
-  nav2_core::Controller)
+  mpc_ufrws_controller::MpcUFRWSController, nav2_core::Controller)
