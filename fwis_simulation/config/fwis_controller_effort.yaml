@@ -9,6 +9,9 @@ controller_manager:
     forward_effort_controller:
       type: forward_command_controller/ForwardCommandController
 
+    scanner_position_controller:
+      type: forward_command_controller/ForwardCommandController
+
 forward_effort_controller:
   ros__parameters:
     joints:
@@ -21,3 +24,10 @@ forward_effort_controller:
       - drive3_axis_joint
       - drive4_axis_joint
     interface_name: effort
+
+scanner_position_controller:
+  ros__parameters:
+    joints:
+      - scanner1_joint
+      - scanner2_joint
+    interface_name: position

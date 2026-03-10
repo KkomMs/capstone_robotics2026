@@ -125,6 +125,8 @@ void MpcUFRWSController::configure(
   // ── MPC 파라미터 ─────────────────────────────────────────────────────────────
   declare_parameter_if_not_declared(node, plugin_name_ + ".desired_linear_vel",
     rclcpp::ParameterValue(0.15));
+  declare_parameter_if_not_declared(node, plugin_name_ + ".lookahead_dist",
+  rclcpp::ParameterValue(0.5));
   declare_parameter_if_not_declared(node, plugin_name_ + ".control_period",
     rclcpp::ParameterValue(0.1));
   declare_parameter_if_not_declared(node, plugin_name_ + ".prediction_horizon",
@@ -170,6 +172,7 @@ void MpcUFRWSController::configure(
   L_ = Lf_ + Lr_;
 
   node->get_parameter(plugin_name_ + ".desired_linear_vel", V_ref_);
+  node->get_parameter(plugin_name_ + ".lookahead_dist", lookahead_dist_);
   node->get_parameter(plugin_name_ + ".control_period",     dt_);
   node->get_parameter(plugin_name_ + ".prediction_horizon", N_);
 
@@ -283,11 +286,33 @@ void MpcUFRWSController::setPlan(const nav_msgs::msg::Path & path)
 
 geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   const geometry_msgs::msg::PoseStamped & pose,
-  const geometry_msgs::msg::Twist & /*velocity*/,
-  nav2_core::GoalChecker * /*goal_checker*/)
+  const geometry_msgs::msg::Twist & velocity,
+  nav2_core::GoalChecker * goal_checker)
 {
   if (global_plan_.poses.empty()) {
     throw nav2_core::PlannerException("MpcUFRWSController: Global plan is empty.");
+  }
+
+  // ── 0. Goal 도달 여부 확인 ────────────────────────────────────────────────
+  // Nav2 GoalChecker: xy_goal_tolerance / yaw_goal_tolerance 파라미터 기준으로
+  // 현재 포즈가 goal에 충분히 가까운지 판단한다.
+  if (goal_checker) {
+    const auto & goal_pose = global_plan_.poses.back();
+
+    if (goal_checker->isGoalReached(pose.pose, goal_pose.pose, velocity)) {
+      RCLCPP_INFO(logger_, "Goal reached. Stopping robot.");
+
+      // 바퀴 속도 0, 조향각 0으로 정지 명령 발행
+      publishStopCommands();
+
+      // Nav2에 정지 Twist 반환
+      geometry_msgs::msg::TwistStamped stop_cmd;
+      stop_cmd.header.frame_id = pose.header.frame_id;
+      stop_cmd.header.stamp    = clock_->now();
+      stop_cmd.twist.linear.x  = 0.0;
+      stop_cmd.twist.angular.z = 0.0;
+      return stop_cmd;
+    }
   }
 
   // ── 1. 현재 상태 추출 ─────────────────────────────────────────────────────
@@ -500,7 +525,7 @@ std::vector<VehicleState> MpcUFRWSController::generateReferenceTrajectory(
   std::vector<VehicleState> ref_seq;
   ref_seq.reserve(static_cast<size_t>(N_));
 
-  const double step_dist = V_ref_ * dt_;  ///< 1 스텝당 이동 거리 [m]
+  const double step_dist = lookahead_dist_ / static_cast<double>(N_);
 
   for (int i = 0; i < N_; ++i) {
     const double target_dist = step_dist * static_cast<double>(i + 1);
@@ -523,26 +548,29 @@ std::vector<VehicleState> MpcUFRWSController::generateReferenceTrajectory(
     ref.x = poses[sel_idx].pose.position.x;
     ref.y = poses[sel_idx].pose.position.y;
 
-    // 헤딩: 플래너의 쿼터니언을 무시하고, 경로점 사이의 벡터(dx, dy)로 직접 계산
+    // ── ref.theta 계산 ───────────────────────────────────────────────────
+    // 전략: 경로 접선 방향(tangent)을 우선 사용.
+    //   - 전방 경유점이 있으면 (sel_idx → sel_idx+1) 방향
+    //   - 마지막 경유점이면 (sel_idx-1 → sel_idx) 방향 (후방 차분)
+    //   - 경로가 점 1개뿐이면 pose quaternion에서 추출
     if (sel_idx + 1 < n_poses) {
-      // 다음 점이 있다면 전진 방향(Forward Difference)
-      const double fw_dx = poses[sel_idx + 1].pose.position.x - poses[sel_idx].pose.position.x;
-      const double fw_dy = poses[sel_idx + 1].pose.position.y - poses[sel_idx].pose.position.y;
-      if (std::hypot(fw_dx, fw_dy) > 1e-5) {
-        ref.theta = std::atan2(fw_dy, fw_dx);
-      }
+      // 전방 차분: 현재 → 다음 경유점
+      const double dx = poses[sel_idx + 1].pose.position.x - poses[sel_idx].pose.position.x;
+      const double dy = poses[sel_idx + 1].pose.position.y - poses[sel_idx].pose.position.y;
+      ref.theta = std::atan2(dy, dx);
     } else if (sel_idx > 0) {
-      // 마지막 점이라면 이전 점과의 방향(Backward Difference) 유지
-      const double bk_dx = poses[sel_idx].pose.position.x - poses[sel_idx - 1].pose.position.x;
-      const double bk_dy = poses[sel_idx].pose.position.y - poses[sel_idx - 1].pose.position.y;
-      if (std::hypot(bk_dx, bk_dy) > 1e-5) {
-        ref.theta = std::atan2(bk_dy, bk_dx);
-      }
+      // 후방 차분: 이전 → 현재 경유점 (경로 끝 부분)
+      const double dx = poses[sel_idx].pose.position.x - poses[sel_idx - 1].pose.position.x;
+      const double dy = poses[sel_idx].pose.position.y - poses[sel_idx - 1].pose.position.y;
+      ref.theta = std::atan2(dy, dx);
     } else {
-      // 점이 1개밖에 없다면 어쩔 수 없이 쿼터니언 사용 (거의 발생하지 않음)
-      const auto & q = poses[sel_idx].pose.orientation;
-      ref.theta = std::atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+      // fallback: pose의 quaternion에서 yaw 추출
+      const auto & ori = poses[sel_idx].pose.orientation;
+      ref.theta = std::atan2(
+        2.0 * (ori.w * ori.z + ori.x * ori.y),
+        1.0 - 2.0 * (ori.y * ori.y + ori.z * ori.z));
     }
+    // ────────────────────────────────────────────────────────────────────
 
     ref_seq.push_back(ref);
   }
@@ -625,6 +653,21 @@ WheelVelocities MpcUFRWSController::computeWheelVelocities(double delta_f, doubl
   return wv;
 }
 
+// ── 정지 명령 발행 ─────────────────────────────────────────────────────────────
+
+void MpcUFRWSController::publishStopCommands()
+{
+  // 속도 0
+  std_msgs::msg::Float64MultiArray drive_msg;
+  drive_msg.data = {0.0, 0.0, 0.0, 0.0};
+  pub_drive_->publish(drive_msg);
+
+  // 조향각 0 (중립)
+  std_msgs::msg::Float64MultiArray steer_msg;
+  steer_msg.data = {0.0, 0.0, 0.0, 0.0};
+  pub_steer_->publish(steer_msg);
+}
+
 // ── 바퀴 명령 발행 ─────────────────────────────────────────────────────────────
 
 void MpcUFRWSController::publishWheelCommands(const WheelAngles & steer, const WheelVelocities & vel)
@@ -635,7 +678,6 @@ void MpcUFRWSController::publishWheelCommands(const WheelAngles & steer, const W
   pub_steer_->publish(steer_msg);
 
   // 구동 속도 명령: [FL, FR, RL, RR] — 등속 단순 가정
-  // (정밀 제어 필요 시 각 바퀴의 ICR 기반 반경 계산으로 확장 가능)
   std_msgs::msg::Float64MultiArray drive_msg;
   drive_msg.data = {vel.fl, vel.fr, vel.rl, vel.rr};
   pub_drive_->publish(drive_msg);

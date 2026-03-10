@@ -22,7 +22,7 @@ def generate_launch_description():
     world_path = PathJoinSubstitution([
         FindPackageShare('fwis_simulation'),
         'worlds',
-        'empty_world.sdf'
+        'demo_room.sdf'
     ])
 
     set_gazebo_resource = AppendEnvironmentVariable(
@@ -64,10 +64,10 @@ def generate_launch_description():
         output='screen',
         arguments=['-topic', 'robot_description',
                    '-name', 'fwis',
-                #    '-x', '3.6',
-                #    '-y', '3.3',
+                   '-x', '3.6',
+                   '-y', '3.3',
                    '-z', '0.2',
-                #    '-Y', '-1.5708',
+                   '-Y', '-1.5708',
                    '-allow_renaming', 'true'],
     )
 
@@ -94,6 +94,15 @@ def generate_launch_description():
             robot_controllers,
             ],
     )
+    scanner_position_controller_spawner = Node(
+        package='controller_manager',
+        executable='spawner',
+        arguments=[
+            'scanner_position_controller',
+            '--param-file',
+            robot_controllers,
+            ],
+    )
     odom_node = Node(
         package='fwis_simulation',
         executable='odom_publisher.py',
@@ -116,10 +125,10 @@ def generate_launch_description():
             '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
             '/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
             '/imu@sensor_msgs/msg/Imu[gz.msgs.IMU',
-            "/arucam_left/image@sensor_msgs/msg/Image[ignition.msgs.Image",
-            "/arucam_left/camera_info@sensor_msgs/msg/CameraInfo[ignition.msgs.CameraInfo",
-            "/arucam_right/image@sensor_msgs/msg/Image[ignition.msgs.Image",
-            "/arucam_right/camera_info@sensor_msgs/msg/CameraInfo[ignition.msgs.CameraInfo",
+            "/scanner1/image@sensor_msgs/msg/Image[ignition.msgs.Image",
+            "/scanner1/camera_info@sensor_msgs/msg/CameraInfo[ignition.msgs.CameraInfo",
+            "/scanner2/image@sensor_msgs/msg/Image[ignition.msgs.Image",
+            "/scanner2/camera_info@sensor_msgs/msg/CameraInfo[ignition.msgs.CameraInfo",
         ],
         output='screen'
     )
@@ -143,7 +152,8 @@ def generate_launch_description():
             event_handler=OnProcessExit(
                 target_action=joint_state_broadcaster_spawner,
                 on_exit=[forward_position_controller_spawner,
-                         forward_velocity_controller_spawner],
+                         forward_velocity_controller_spawner,
+                         scanner_position_controller_spawner],
             )
         ),
         bridge,

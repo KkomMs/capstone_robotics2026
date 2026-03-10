@@ -136,28 +136,30 @@ geometry_msgs::msg::TwistStamped LyapunovKinematicsController::computeVelocityCo
 
     // 3. 오차 계산
     // 로봇 local frame이므로 경로상의 점들이 에러(xe, ye)가 됨.
+    // -> orientation 값 넘겨주는 planner 필요.
     double xe = goal_pose.position.x;
     double ye = goal_pose.position.y;
+    double theta_e = tf2::getYaw(goal_pose.orientation);
     
-    // 헤딩(theta_e) 자동 계산: 플래너의 orientation 무시
-    double theta_e = 0.0;
-    auto next_it = std::next(goal_pose_it);
+    ////// [예전 코드] ==  헤딩(theta_e) 자동 계산
+    // double theta_e = 0.0;
+    // auto next_it = std::next(goal_pose_it);
     
-    if (next_it != transformed_plan.poses.end()) {
-        // 목표점의 다음 점이 존재하면 두 점 사이의 벡터로 방향 계산
-        double dx = next_it->pose.position.x - goal_pose.position.x;
-        double dy = next_it->pose.position.y - goal_pose.position.y;
-        theta_e = std::atan2(dy, dx);
-    } else if (goal_pose_it != transformed_plan.poses.begin()) {
-        // 목표점이 경로의 끝점이라면, 바로 이전 점과 목표점 사이의 벡터로 방향 계산
-        auto prev_it = std::prev(goal_pose_it);
-        double dx = goal_pose.position.x - prev_it->pose.position.x;
-        double dy = goal_pose.position.y - prev_it->pose.position.y;
-        theta_e = std::atan2(dy, dx);
-    } else {
-        // 예외 상황 폴백
-        theta_e = tf2::getYaw(goal_pose.orientation);
-    }
+    // if (next_it != transformed_plan.poses.end()) {
+    //     // 목표점의 다음 점이 존재하면 두 점 사이의 벡터로 방향 계산
+    //     double dx = next_it->pose.position.x - goal_pose.position.x;
+    //     double dy = next_it->pose.position.y - goal_pose.position.y;
+    //     theta_e = std::atan2(dy, dx);
+    // } else if (goal_pose_it != transformed_plan.poses.begin()) {
+    //     // 목표점이 경로의 끝점이라면, 바로 이전 점과 목표점 사이의 벡터로 방향 계산
+    //     auto prev_it = std::prev(goal_pose_it);
+    //     double dx = goal_pose.position.x - prev_it->pose.position.x;
+    //     double dy = goal_pose.position.y - prev_it->pose.position.y;
+    //     theta_e = std::atan2(dy, dx);
+    // } else {
+    //     // 예외 상황 폴백
+    //     theta_e = tf2::getYaw(goal_pose.orientation);
+    // }
 
     // 4. Global Control Law
     double v_A = desired_linear_vel_ * cos(theta_e) + kx_ * xe;

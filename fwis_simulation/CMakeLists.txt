@@ -42,6 +42,7 @@ install(
     scripts/kinematics_smc_controller.py
     scripts/aruco_aligner.py
     scripts/mpc_ufrws_controller.py
+    scripts/scanner_motor_test.py
   DESTINATION
     lib/${PROJECT_NAME}
 )

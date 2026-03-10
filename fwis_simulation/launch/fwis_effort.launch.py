@@ -85,6 +85,15 @@ def generate_launch_description():
             robot_controllers,
             ],
     )
+    scanner_position_controller_spawner = Node(
+        package='controller_manager',
+        executable='spawner',
+        arguments=[
+            'scanner_position_controller',
+            '--param-file',
+            robot_controllers,
+            ],
+    )
     odom_node = Node(
         package='fwis_simulation',
         executable='odom_publisher.py',
@@ -108,10 +117,10 @@ def generate_launch_description():
             '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
             '/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
             '/imu@sensor_msgs/msg/Imu[gz.msgs.IMU',
-            "/arucam_left/image@sensor_msgs/msg/Image[ignition.msgs.Image",
-            "/arucam_left/camera_info@sensor_msgs/msg/CameraInfo[ignition.msgs.CameraInfo",
-            "/arucam_right/image@sensor_msgs/msg/Image[ignition.msgs.Image",
-            "/arucam_right/camera_info@sensor_msgs/msg/CameraInfo[ignition.msgs.CameraInfo",
+            "/scanner1/image@sensor_msgs/msg/Image[ignition.msgs.Image",
+            "/scanner1/camera_info@sensor_msgs/msg/CameraInfo[ignition.msgs.CameraInfo",
+            "/scanner2/image@sensor_msgs/msg/Image[ignition.msgs.Image",
+            "/scanner2/camera_info@sensor_msgs/msg/CameraInfo[ignition.msgs.CameraInfo",
             ],
         output='screen'
     )
@@ -134,7 +143,8 @@ def generate_launch_description():
         RegisterEventHandler(
             event_handler=OnProcessExit(
                 target_action=joint_state_broadcaster_spawner,
-                on_exit=[forward_effort_controller_spawner],
+                on_exit=[forward_effort_controller_spawner,
+                         scanner_position_controller_spawner],
             )
         ),
         bridge,

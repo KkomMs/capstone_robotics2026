@@ -26,7 +26,7 @@ amcl:
     recovery_alpha_fast: 0.0
     recovery_alpha_slow: 0.0
     resample_interval: 1
-    robot_model_type: "nav2_amcl::OmniMotionModel"
+    robot_model_type: "nav2_amcl::OmniMotionModel"    # nav2_amcl::OmniMotionModel
     save_pose_rate: 0.5
     sigma_hit: 0.2
     tf_broadcast: true
@@ -151,21 +151,22 @@ controller_server:
       plugin: "mpc_ufrws_controller::MpcUFRWSController"
       # ── MPC 파라미터 ───────────────────────────
       desired_linear_vel: 0.2
-      control_period: 0.01        # 100 [Hz]
-      prediction_horizon: 10      # 예측 구간
-      max_steer_angle: 180        # [deg]
+      lookahead_dist: 0.3
+      control_period: 0.01         # 100 [Hz]
+      prediction_horizon: 10       # 예측 구간
+      max_steer_angle: 89.9        # [deg]
       # ── cost function 가중치 ───────────────────
       ## 상태 오차 가중치
-      Q_y: 200.0                  # 횡방향 오차 가중치. 값이 클수록 경로 중앙 유지하려고 함
+      Q_y: 100.0                  # 횡방향 오차 가중치. 값이 클수록 경로 중앙 유지하려고 함
       Q_phi: 10.0                 # 선수각 오차 가중치. 값이 클수록 차체 방향 유지하려고 함 (crab walking)
       ## 제어 입력 가중치
       R_u: 0.1                    # 조향각 크기 페널티. 값이 클수록 조향각 변화 작음
       R_delta: 5.0                # 조향각 변화량 페널티. 값이 클수록 조향 속도 변화 작음
       # ── NLopt 최적화 가중치 ─────────────────────
       opt_max_eval: 100           # 실시간 보장을 위한 함수 평가 횟수 상한
-      opt_ftol_rel: 1e-6          # 비용 함수 상대 수렴 허용치
-      opt_xtol_rel: 1e-6          # 변수 상대 수렴 허용치
-      opt_grad_eps: 1e-5          # 유한 차분 스텝 크기
+      opt_ftol_rel: 1.0e-6        # 비용 함수 상대 수렴 허용치
+      opt_xtol_rel: 1.0e-6        # 변수 상대 수렴 허용치
+      opt_grad_eps: 1.0e-5        # 유한 차분 스텝 크기
       # ── TF ───────────────────────────────────
       transform_tolerance: 0.1
     # FollowPath:
@@ -290,7 +291,7 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.05
-      footprint: "[[0.35, 0.35], [0.35, -0.35], [-0.35, -0.35], [-0.35, 0.35]]"
+      footprint: "[[0.36, 0.36], [0.36, -0.36], [-0.36, -0.36], [-0.36, 0.36]]"
       plugins: ["obstacle_layer", "voxel_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
@@ -344,7 +345,7 @@ global_costmap:
       global_frame: map
       robot_base_frame: base_footprint
       use_sim_time: True                   # add
-      footprint: "[[0.35, 0.35], [0.35, -0.35], [-0.35, -0.35], [-0.35, 0.35]]"
+      footprint: "[[0.36, 0.36], [0.36, -0.36], [-0.36, -0.36], [-0.36, 0.36]]"
       resolution: 0.05
       track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "voxel_layer", "inflation_layer"]
@@ -418,28 +419,27 @@ planner_server:
     # GridBased:
     #   plugin: "fwis_straightline_planner/StraightLine" 
     #   interpolation_resolution: 0.1
-    #### straightLine, NavfnPlanner로 lya_kin 컨트롤러 실행하면 엉뚱한 곳으로 감 but smacplanner2d로 하면 잘 추종함. 차이점 알아보기
-    GridBased:
-      plugin: "nav2_smac_planner/SmacPlanner2D" # In Iron and older versions, "/" was used instead of "::"
-      tolerance: 0.125                      # tolerance for planning if unable to reach exact pose, in meters
-      downsample_costmap: false             # whether or not to downsample the map
-      downsampling_factor: 1                # multiplier for the resolution of the costmap layer (e.g. 2 on a 5cm costmap would be 10cm)
-      allow_unknown: true                   # allow traveling in unknown space
-      max_iterations: 1000000               # maximum total iterations to search for before failing (in case unreachable), set to -1 to disable
-      max_on_approach_iterations: 1000      # maximum number of iterations to attempt to reach goal once in tolerance
-      max_planning_time: 2.0                # max time in s for planner to plan, smooth
-      cost_travel_multiplier: 2.0           # Cost multiplier to apply to search to steer away from high cost areas. Larger values will place in the center of aisles more exactly (if non-`FREE` cost potential field exists) but take slightly longer to compute. To optimize for speed, a value of 1.0 is reasonable. A reasonable tradeoff value is 2.0. A value of 0.0 effective disables steering away from obstacles and acts like a naive binary search A*.
-      use_final_approach_orientation: false # Whether to set the final path pose at the goal's orientation to the requested orientation (false) or in line with the approach angle so the robot doesn't rotate to heading (true)
-      smoother:
-        max_iterations: 1000
-        w_smooth: 0.3
-        w_data: 0.2
-        tolerance: 1.0e-10
     # GridBased:
-    #   plugin: 'nav2_navfn_planner/NavfnPlanner' # In Iron and older versions, "/" was used instead of "::"
-    #   use_astar: True
-    #   allow_unknown: True
-    #   tolerance: 1.0
+    #   plugin: "nav2_smac_planner/SmacPlanner2D" # In Iron and older versions, "/" was used instead of "::"
+    #   tolerance: 0.125                      # tolerance for planning if unable to reach exact pose, in meters
+    #   downsample_costmap: false             # whether or not to downsample the map
+    #   downsampling_factor: 1                # multiplier for the resolution of the costmap layer (e.g. 2 on a 5cm costmap would be 10cm)
+    #   allow_unknown: true                   # allow traveling in unknown space
+    #   max_iterations: 1000000               # maximum total iterations to search for before failing (in case unreachable), set to -1 to disable
+    #   max_on_approach_iterations: 1000      # maximum number of iterations to attempt to reach goal once in tolerance
+    #   max_planning_time: 2.0                # max time in s for planner to plan, smooth
+    #   cost_travel_multiplier: 2.0           # Cost multiplier to apply to search to steer away from high cost areas. Larger values will place in the center of aisles more exactly (if non-`FREE` cost potential field exists) but take slightly longer to compute. To optimize for speed, a value of 1.0 is reasonable. A reasonable tradeoff value is 2.0. A value of 0.0 effective disables steering away from obstacles and acts like a naive binary search A*.
+    #   use_final_approach_orientation: false # Whether to set the final path pose at the goal's orientation to the requested orientation (false) or in line with the approach angle so the robot doesn't rotate to heading (true)
+    #   smoother:
+    #     max_iterations: 1000
+    #     w_smooth: 0.3
+    #     w_data: 0.2
+    #     tolerance: 1.0e-10
+    GridBased:
+      plugin: 'nav2_navfn_planner/NavfnPlanner' # In Iron and older versions, "/" was used instead of "::"
+      use_astar: True
+      allow_unknown: True
+      tolerance: 1.0
 
 planner_server_rclcpp_node:
   ros__parameters:

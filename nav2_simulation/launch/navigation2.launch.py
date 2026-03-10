@@ -71,6 +71,6 @@ def generate_launch_description():
                 'use_sim_time': use_sim_time,
                 'params_file': param_dir}.items(),
         ),
-        #waypoint_node,
+        waypoint_node,
         rviz_node,
     ])
