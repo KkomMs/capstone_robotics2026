@@ -1,45 +1,3 @@
-<?xml version="1.0" ?>
-<sdf version="1.8">
-  <world name="demo_room">
-    <static>true</static>
-    <physics name="1ms" type="ignored">
-      <max_step_size>0.001</max_step_size>
-      <real_time_factor>1.0</real_time_factor>
-    </physics>
-    <plugin filename="libignition-gazebo-physics-system.so" name="ignition::gazebo::systems::Physics">
-    </plugin>
-    <plugin filename="libignition-gazebo-user-commands-system.so" name="ignition::gazebo::systems::UserCommands">
-    </plugin>
-    <plugin filename="libignition-gazebo-scene-broadcaster-system.so" name="ignition::gazebo::systems::SceneBroadcaster">
-    </plugin>
-    <plugin filename="ignition-gazebo-contact-system" name="gz::sim::systems::Contact">
-    </plugin>
-    <plugin filename="ignition-gazebo-forcetorque-system" name="ignition::gazebo::systems::ForceTorque">
-    </plugin>
-    <plugin filename="libignition-gazebo-imu-system.so" name="ignition::gazebo::systems::Imu">
-    </plugin>
-    <plugin filename="libignition-gazebo-sensors-system.so" name="ignition::gazebo::systems::Sensors">
-      <render_engine>ogre2</render_engine>
-    </plugin>
-
-    <!--light-->
-    <light type="directional" name="sun">
-      <cast_shadows>true</cast_shadows>
-      <pose>0 0 10 0 0 0</pose>
-      <diffuse>0.8 0.8 0.8 1</diffuse>
-      <specular>0.2 0.2 0.2 1</specular>
-      <attenuation>
-        <range>1000</range>
-        <constant>0.9</constant>
-        <linear>0.01</linear>
-        <quadratic>0.001</quadratic>
-      </attenuation>
-      <direction>-0.5 0.1 -0.9</direction>
-    </light>
-
-    <include>
-      <uri>model://demo_room</uri>
-    </include>
 
     <include>
       <name>aruco_marker_0</name>
@@ -141,6 +99,3 @@
       <uri>model://generated_markers/aruco_marker_19</uri>
       <pose>2.68 -0.60 0.13 0.00 1.570796 3.141592</pose>
     </include>
-
-  </world>
-</sdf>
