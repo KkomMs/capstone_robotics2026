@@ -43,14 +43,14 @@ amcl:
     always_reset_initial_pose: false
     first_map_only: false
     initial_pose:
-      x: 3.6
-      y: 3.3
-      z: 0.0
-      yaw: -1.57
-      # x: 0.0
-      # y: 0.0
+      # x: 3.6
+      # y: 3.3
       # z: 0.0
-      # yaw: 0.0
+      # yaw: -1.57
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      yaw: 0.0
 
 amcl_map_client:
   ros__parameters:
@@ -134,7 +134,7 @@ controller_server:
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
       xy_goal_tolerance: 0.25
-      yaw_goal_tolerance: 0.25
+      yaw_goal_tolerance: 1.0
     # Controller parameters
     # FollowPath:
     #   plugin: "lyapunov_kinematics_controller::LyapunovKinematicsController"
@@ -150,15 +150,15 @@ controller_server:
     FollowPath:
       plugin: "mpc_ufrws_controller::MpcUFRWSController"
       # ── MPC 파라미터 ───────────────────────────
-      desired_linear_vel: 0.2
+      desired_linear_vel: 0.25
       lookahead_dist: 0.3
       control_period: 0.01         # 100 [Hz]
       prediction_horizon: 10       # 예측 구간
-      max_steer_angle: 89.9        # [deg]
+      max_steer_angle: 180.0       # [deg]
       # ── cost function 가중치 ───────────────────
       ## 상태 오차 가중치
-      Q_y: 100.0                  # 횡방향 오차 가중치. 값이 클수록 경로 중앙 유지하려고 함
-      Q_phi: 10.0                 # 선수각 오차 가중치. 값이 클수록 차체 방향 유지하려고 함 (crab walking)
+      Q_y: 200.0                  # 횡방향 오차 가중치. 값이 클수록 경로 중앙 유지하려고 함
+      Q_phi: 10.0                # 선수각 오차 가중치. 값이 클수록 차체 방향 유지하려고 함 (crab walking)
       ## 제어 입력 가중치
       R_u: 0.1                    # 조향각 크기 페널티. 값이 클수록 조향각 변화 작음
       R_delta: 5.0                # 조향각 변화량 페널티. 값이 클수록 조향 속도 변화 작음

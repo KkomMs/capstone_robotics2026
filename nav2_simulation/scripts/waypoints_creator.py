@@ -46,7 +46,7 @@ def main():
     wp2.header.frame_id = 'map'
     wp2.header.stamp = navigator.get_clock().now().to_msg()
     wp2.pose.position.x = 3.6
-    wp2.pose.position.y = 0.2
+    wp2.pose.position.y = 0.0
     wp2.pose.orientation = yaw2quaternion(-half_turn)
     waypoints.append(wp2)
 

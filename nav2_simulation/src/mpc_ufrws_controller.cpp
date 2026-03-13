@@ -240,6 +240,12 @@ void MpcUFRWSController::configure(
     "L=%.3f m, W=%.3f m, V_ref=%.2f m/s, N=%d, dt=%.2f s, "
     "max_steer=%.1f deg, optimizer=NLopt::LD_SLSQP, max_eval=%d",
     L_, W_, V_ref_, N_, dt_, max_steer_deg, opt_max_eval_);
+
+  // ── watchdog 타이머 ───────────────────────────────────────────────────────────
+  last_cmd_time_ = clock_->now();
+  watchdog_timer_ = node->create_wall_timer(
+    std::chrono::milliseconds(200),
+    std::bind(&MpcUFRWSController::watchdogCallback, this));
 }
 
 void MpcUFRWSController::cleanup()
@@ -292,6 +298,9 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   if (global_plan_.poses.empty()) {
     throw nav2_core::PlannerException("MpcUFRWSController: Global plan is empty.");
   }
+
+  // 함수가 호출될 때마다 시간 갱신
+  last_cmd_time_ = clock_->now();
 
   // ── 0. Goal 도달 여부 확인 ────────────────────────────────────────────────
   // Nav2 GoalChecker: xy_goal_tolerance / yaw_goal_tolerance 파라미터 기준으로
@@ -383,10 +392,9 @@ VehicleState MpcUFRWSController::ufrwsModel(
   const double avg = (delta_f + delta_r) / 2.0;
 
   VehicleState next;
-  next.x     = state.x     + V_ref_ * std::cos(state.theta + avg) * dt_;
-  next.y     = state.y     + V_ref_ * std::sin(state.theta + avg) * dt_;
-  next.theta = normalizeAngle(
-    state.theta + (V_ref_ * std::cos(avg) / L_) * (delta_f - delta_r) * dt_);
+  next.x = state.x + V_ref_ * std::cos(state.theta + avg) * dt_;
+  next.y = state.y + V_ref_ * std::sin(state.theta + avg) * dt_;
+  next.theta = normalizeAngle(state.theta + (V_ref_ * std::cos(avg) / L_) * (delta_f - delta_r) * dt_);
 
   return next;
 }
@@ -498,33 +506,56 @@ std::vector<double> MpcUFRWSController::optimizeMPC(
 // ── 참조 궤적 생성 ─────────────────────────────────────────────────────────────
 
 std::vector<VehicleState> MpcUFRWSController::generateReferenceTrajectory(
-  const VehicleState & current_state) const
+  const VehicleState & current_state)
 {
-  const auto & poses   = global_plan_.poses;
-  const size_t n_poses = poses.size();
+  auto & poses = global_plan_.poses;
 
-  if (n_poses == 0) {
+  if (poses.empty()) {
     throw std::runtime_error("Global plan is empty in generateReferenceTrajectory.");
   }
 
-  // ── 1. 현재 위치에서 가장 가까운 경로점 탐색 ─────────────────────────────
-  size_t closest_idx = 0;
-  double min_dist    = std::numeric_limits<double>::max();
-
-  for (size_t i = 0; i < n_poses; ++i) {
-    const double dx = poses[i].pose.position.x - current_state.x;
-    const double dy = poses[i].pose.position.y - current_state.y;
-    const double d  = std::hypot(dx, dy);
-    if (d < min_dist) {
-      min_dist    = d;
-      closest_idx = i;
+  // 로봇으로부터 일정 거리 내에 있는 범위만 탐색
+  double max_search_dist = 2.0;
+  auto search_upper_bound = poses.begin();
+  double integrated_dist = 0.0;
+  
+  for (auto it = poses.begin(); it != poses.end(); ++it) {
+    search_upper_bound = it;
+    if (it + 1 != poses.end()) {
+      integrated_dist += std::hypot(
+        (it + 1)->pose.position.x - it->pose.position.x,
+        (it + 1)->pose.position.y - it->pose.position.y);
+    }
+    if (integrated_dist > max_search_dist) {
+      break;
     }
   }
 
-  // ── 2. V_ref·dt 간격으로 N 스텝 참조점 샘플링 ────────────────────────────
+  // 가장 가까운 경로점 탐색
+  auto closest_pose_it = poses.begin();
+  double min_dist = std::numeric_limits<double>::max();
+
+  for (auto it = poses.begin(); it != search_upper_bound; ++it) {
+    const double dx = it->pose.position.x - current_state.x;
+    const double dy = it->pose.position.y - current_state.y;
+    const double d  = std::hypot(dx, dy);
+    
+    if (d < min_dist) {
+      min_dist = d;
+      closest_pose_it = it;
+    }
+  }
+
+  // 지나온 경로는 잘라내기
+  if (closest_pose_it != poses.begin()) {
+    poses.erase(poses.begin(), closest_pose_it);
+  }
+
+  const size_t n_poses = poses.size();
+  size_t closest_idx = 0;
+
   std::vector<VehicleState> ref_seq;
   ref_seq.reserve(static_cast<size_t>(N_));
-
   const double step_dist = lookahead_dist_ / static_cast<double>(N_);
 
   for (int i = 0; i < N_; ++i) {
@@ -532,7 +563,6 @@ std::vector<VehicleState> MpcUFRWSController::generateReferenceTrajectory(
     double accumulated = 0.0;
     size_t sel_idx     = closest_idx;
 
-    // 누적 거리가 target_dist를 넘는 경로점 탐색
     for (size_t k = closest_idx; k + 1 < n_poses; ++k) {
       const double seg_dx = poses[k + 1].pose.position.x - poses[k].pose.position.x;
       const double seg_dy = poses[k + 1].pose.position.y - poses[k].pose.position.y;
@@ -543,34 +573,89 @@ std::vector<VehicleState> MpcUFRWSController::generateReferenceTrajectory(
       }
     }
 
-    // 참조 상태 구성
     VehicleState ref;
     ref.x = poses[sel_idx].pose.position.x;
     ref.y = poses[sel_idx].pose.position.y;
 
-    // ── ref.theta 계산 ───────────────────────────────────────────────────
-    // 전략: 경로 접선 방향(tangent)을 우선 사용.
-    //   - 전방 경유점이 있으면 (sel_idx → sel_idx+1) 방향
-    //   - 마지막 경유점이면 (sel_idx-1 → sel_idx) 방향 (후방 차분)
-    //   - 경로가 점 1개뿐이면 pose quaternion에서 추출
+    // ref theta 계산 (경로의 접선 방향)
     if (sel_idx + 1 < n_poses) {
-      // 전방 차분: 현재 → 다음 경유점
       const double dx = poses[sel_idx + 1].pose.position.x - poses[sel_idx].pose.position.x;
       const double dy = poses[sel_idx + 1].pose.position.y - poses[sel_idx].pose.position.y;
       ref.theta = std::atan2(dy, dx);
     } else if (sel_idx > 0) {
-      // 후방 차분: 이전 → 현재 경유점 (경로 끝 부분)
       const double dx = poses[sel_idx].pose.position.x - poses[sel_idx - 1].pose.position.x;
       const double dy = poses[sel_idx].pose.position.y - poses[sel_idx - 1].pose.position.y;
       ref.theta = std::atan2(dy, dx);
     } else {
-      // fallback: pose의 quaternion에서 yaw 추출
       const auto & ori = poses[sel_idx].pose.orientation;
       ref.theta = std::atan2(
         2.0 * (ori.w * ori.z + ori.x * ori.y),
         1.0 - 2.0 * (ori.y * ori.y + ori.z * ori.z));
     }
-    // ────────────────────────────────────────────────────────────────────
+
+    // crab walking 테스트하려면 아래 주석 해제하고 ref.theta = 0 으로 지정 
+    // (heading angle 항상 정면으로 고정)
+    // ref.theta = 0;
+
+  ///////////// ref.theta 계산하는 다른 방법 (작성중) ///////////
+  // // 차체 방향의 기준점 (초기값은 현재 로봇의 방향)
+  // double prev_theta = current_state.theta;
+
+  // // 크랩 워킹 허용 임계값: 최대 조향각의 85%만 경로 추종에 사용하고 15%는 오차 보정용으로 남김
+  // const double crab_limit = max_steer_ * 0.85;
+
+  // for (int i = 0; i < N_; ++i) {
+  //   const double target_dist = step_dist * static_cast<double>(i + 1);
+  //   double accumulated = 0.0;
+  //   size_t sel_idx     = closest_idx;
+
+  //   // 타겟 거리만큼 앞선 경로점 찾기
+  //   for (size_t k = closest_idx; k + 1 < n_poses; ++k) {
+  //     const double seg_dx = poses[k + 1].pose.position.x - poses[k].pose.position.x;
+  //     const double seg_dy = poses[k + 1].pose.position.y - poses[k].pose.position.y;
+  //     accumulated += std::hypot(seg_dx, seg_dy);
+  //     sel_idx = k + 1;
+  //     if (accumulated >= target_dist) {
+  //       break;
+  //     }
+  //   }
+
+  //   VehicleState ref;
+  //   ref.x = poses[sel_idx].pose.position.x;
+  //   ref.y = poses[sel_idx].pose.position.y;
+
+  //   // 4-1. 경로의 기하학적 접선 각도(주행 궤적 방향, alpha) 계산
+  //   double alpha = 0.0;
+  //   if (sel_idx + 1 < n_poses) {
+  //     const double dx = poses[sel_idx + 1].pose.position.x - poses[sel_idx].pose.position.x;
+  //     const double dy = poses[sel_idx + 1].pose.position.y - poses[sel_idx].pose.position.y;
+  //     alpha = std::atan2(dy, dx);
+  //   } else if (sel_idx > 0) {
+  //     const double dx = poses[sel_idx].pose.position.x - poses[sel_idx - 1].pose.position.x;
+  //     const double dy = poses[sel_idx].pose.position.y - poses[sel_idx - 1].pose.position.y;
+  //     alpha = std::atan2(dy, dx);
+  //   } else {
+  //     const auto & ori = poses[sel_idx].pose.orientation;
+  //     alpha = std::atan2(
+  //       2.0 * (ori.w * ori.z + ori.x * ori.y),
+  //       1.0 - 2.0 * (ori.y * ori.y + ori.z * ori.z));
+  //   }
+
+  //   // 4-2. 크랩 앵글(beta) 계산: 주행해야 할 방향(alpha)과 현재 차체 방향(prev_theta)의 차이
+  //   double beta = normalizeAngle(alpha - prev_theta);
+
+  //   // 4-3. 임계값 기반 조향 (Threshold-based Crab Walking)
+  //   if (std::abs(beta) <= crab_limit) {
+  //     // 바퀴만 꺾어서(크랩 워킹) 이동 가능하므로 차체 방향 유지
+  //     ref.theta = prev_theta;
+  //   } else {
+  //     // 꺾임이 너무 심해서 한계치 초과 -> 초과한 만큼만 차체를 회전시킴
+  //     // copysign(1.0, beta)는 beta의 부호(+ 또는 -)를 반환합니다.
+  //     ref.theta = normalizeAngle(alpha - (std::copysign(1.0, beta) * crab_limit));
+  //   }
+
+  //   // 다음 스텝의 기준 차체 방향 업데이트
+  //   prev_theta = ref.theta;
 
     ref_seq.push_back(ref);
   }
@@ -718,6 +803,15 @@ bool MpcUFRWSController::transformPose(
   } catch (tf2::TransformException & ex) {
     RCLCPP_ERROR(logger_, "transformPose exception: %s", ex.what());
     return false;
+  }
+}
+
+// ── watchdog 콜백 ────────────────────────────────────────────────────────────
+void MpcUFRWSController::watchdogCallback()
+{ 
+  // 0.2초 이상 컨트롤러가 호출되지 않았다면 정지
+  if((clock_->now() - last_cmd_time_).seconds() > 0.2) {
+    publishStopCommands();
   }
 }
 

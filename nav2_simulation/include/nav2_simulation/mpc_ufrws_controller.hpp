@@ -235,7 +235,7 @@ protected:
    * 앞 경로점을 샘플링하여 N개의 참조 상태를 구성한다.
    */
   std::vector<VehicleState> generateReferenceTrajectory(
-    const VehicleState & current_state) const;
+    const VehicleState & current_state);
 
   // ── 4WS Ackermann 기하학 ────────────────────────────────────────────────────
 
@@ -324,6 +324,12 @@ protected:
 
   nav_msgs::msg::Path global_plan_;
   rclcpp::Duration transform_tolerance_{0, 0};
+
+  // ── 타이머 ───────────────────────────────────────────────────────────────────
+
+  rclcpp::TimerBase::SharedPtr watchdog_timer_;
+  rclcpp::Time last_cmd_time_;
+  void watchdogCallback();
 };
 
 }  // namespace mpc_ufrws_controller
