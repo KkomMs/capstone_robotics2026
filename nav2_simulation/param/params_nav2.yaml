@@ -43,14 +43,14 @@ amcl:
     always_reset_initial_pose: false
     first_map_only: false
     initial_pose:
-      # x: 3.6
-      # y: 3.3
-      # z: 0.0
-      # yaw: -1.57
-      x: 0.0
-      y: 0.0
+      x: 3.6
+      y: 3.3
       z: 0.0
-      yaw: 0.0
+      yaw: -1.57
+      # x: 0.0
+      # y: 0.0
+      # z: 0.0
+      # yaw: 0.0
 
 amcl_map_client:
   ros__parameters:
@@ -150,7 +150,7 @@ controller_server:
     FollowPath:
       plugin: "mpc_ufrws_controller::MpcUFRWSController"
       # ── MPC 파라미터 ───────────────────────────
-      desired_linear_vel: 0.25
+      desired_linear_vel: 0.3
       lookahead_dist: 0.3
       control_period: 0.01         # 100 [Hz]
       prediction_horizon: 10       # 예측 구간

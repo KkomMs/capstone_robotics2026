@@ -302,6 +302,18 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   // 함수가 호출될 때마다 시간 갱신
   last_cmd_time_ = clock_->now();
 
+  geometry_msgs::msg::PoseStamped robot_pose_in_plan_frame;
+  if (!transformPose(
+    tf_,
+    global_plan_.header.frame_id,
+    pose,
+    robot_pose_in_plan_frame,
+    transform_tolerance_))
+  {
+    RCLCPP_WARN(logger_, "TF Transform failed. Stopping robot.");
+    return geometry_msgs::msg::TwistStamped();
+  }
+
   // ── 0. Goal 도달 여부 확인 ────────────────────────────────────────────────
   // Nav2 GoalChecker: xy_goal_tolerance / yaw_goal_tolerance 파라미터 기준으로
   // 현재 포즈가 goal에 충분히 가까운지 판단한다.
@@ -326,10 +338,10 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
 
   // ── 1. 현재 상태 추출 ─────────────────────────────────────────────────────
   VehicleState current_state;
-  current_state.x = pose.pose.position.x;
-  current_state.y = pose.pose.position.y;
+  current_state.x = robot_pose_in_plan_frame.pose.position.x;
+  current_state.y = robot_pose_in_plan_frame.pose.position.y;
 
-  const auto & q = pose.pose.orientation;
+  const auto & q = robot_pose_in_plan_frame.pose.orientation;
   current_state.theta = std::atan2(
     2.0 * (q.w * q.z + q.x * q.y),
     1.0 - 2.0 * (q.y * q.y + q.z * q.z));
