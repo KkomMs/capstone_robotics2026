@@ -240,12 +240,13 @@ protected:
   // ── 4WS Ackermann 기하학 ────────────────────────────────────────────────────
 
   /**
-   * @brief 전/후륜 조향각 및 바퀴 속도 계산
+   * @brief 전/후륜 조향각 및 바퀴 속도 계산, 제자리 회전 속도 계산
    *
    * UFRWS 모델의 개별 조향각 및 ICR 개념을 이용한 바퀴 속도 계산
    */
   WheelAngles computeWheelAngles(double delta_f, double delta_r) const;
   WheelVelocities computeWheelVelocities(double delta_f, double delta_r) const;
+  void computePointTurnCommands(double target_yaw_rate, WheelAngles & steer, WheelVelocities & vel) const;
 
   // ── 발행 ────────────────────────────────────────────────────────────────────
 
@@ -264,7 +265,7 @@ protected:
     geometry_msgs::msg::PoseStamped & out_pose,
     const rclcpp::Duration & transform_tolerance) const;
 
-  // ── 유틸 ────────────────────────────────────────────────────────────────────
+  // ── 유틸 ──────────────────────────────────────────────────────────────────
 
   static double normalizeAngle(double angle);
 
@@ -299,6 +300,13 @@ protected:
   int    N_;                ///< 예측 구간 스텝 수
   double max_steer_;        ///< 최대 조향각 [rad]
 
+  // ── 주행 모드 파라미터 ───────────────────────────────────────────────────────
+  bool reversing_mode_;       ///< 후진 모드 여부
+  bool point_turning_mode_;   ///< 제자리 회전 모드 여부
+  bool is_reversing_;         ///< 후진 여부
+  bool is_point_turning_;     ///< 제자리 회전 여부
+  double current_v_ref_;      ///< 현재 적용할 동적 속도 [m/s]
+  
   // ── 비용 함수 가중치 ─────────────────────────────────────────────────────────
 
   double Q_y_;     ///< 횡방향 오차 가중치
@@ -330,6 +338,12 @@ protected:
   rclcpp::TimerBase::SharedPtr watchdog_timer_;
   rclcpp::Time last_cmd_time_;
   void watchdogCallback();
+
+  // ── 모드 처리 함수 ─────────────────────────────────────────────────────────────
+  bool orientationModes(
+    const VehicleState current_state,
+    const geometry_msgs::msg::PoseStamped & pose,
+    geometry_msgs::msg::TwistStamped & cmd_vel);
 };
 
 }  // namespace mpc_ufrws_controller

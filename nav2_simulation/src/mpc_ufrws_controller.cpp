@@ -132,7 +132,13 @@ void MpcUFRWSController::configure(
   declare_parameter_if_not_declared(node, plugin_name_ + ".prediction_horizon",
     rclcpp::ParameterValue(10));
   declare_parameter_if_not_declared(node, plugin_name_ + ".max_steer_angle",
-    rclcpp::ParameterValue(180.0));  // [deg]
+    rclcpp::ParameterValue(89.9));  // [deg]
+
+  // ── 주행 모드 파라미터 ────────────────────────────────────────────────────────
+  declare_parameter_if_not_declared(node, plugin_name_ + ".reversing_mode",
+    rclcpp::ParameterValue(false));
+  declare_parameter_if_not_declared(node, plugin_name_ + ".point_turning_mode",
+    rclcpp::ParameterValue(false));
 
   // ── 비용 함수 가중치 ─────────────────────────────────────────────────────────
   declare_parameter_if_not_declared(node, plugin_name_ + ".Q_y",
@@ -176,9 +182,18 @@ void MpcUFRWSController::configure(
   node->get_parameter(plugin_name_ + ".control_period",     dt_);
   node->get_parameter(plugin_name_ + ".prediction_horizon", N_);
 
-  double max_steer_deg{60.0};
+  double max_steer_deg{89.9};
   node->get_parameter(plugin_name_ + ".max_steer_angle", max_steer_deg);
   max_steer_ = max_steer_deg * M_PI / 180.0;
+
+  node->get_parameter(plugin_name_ + ".reversing_mode", reversing_mode_);
+  node->get_parameter(plugin_name_ + ".point_turning_mode", point_turning_mode_);
+
+  if (reversing_mode_ && point_turning_mode_) {
+    RCLCPP_WARN(logger_, "Both reversing_mode and point_turning_mode are true. Disabling both for safety. Falling back to default forward mode.");
+    reversing_mode_ = false;
+    point_turning_mode_ = false;
+  }
 
   node->get_parameter(plugin_name_ + ".Q_y",    Q_y_);
   node->get_parameter(plugin_name_ + ".Q_phi",  Q_phi_);
@@ -317,26 +332,26 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   // ── 0. Goal 도달 여부 확인 ────────────────────────────────────────────────
   // Nav2 GoalChecker: xy_goal_tolerance / yaw_goal_tolerance 파라미터 기준으로
   // 현재 포즈가 goal에 충분히 가까운지 판단한다.
-  if (goal_checker) {
-    const auto & goal_pose = global_plan_.poses.back();
+  // if (goal_checker) {
+  //   const auto & goal_pose = global_plan_.poses.back();
 
-    if (goal_checker->isGoalReached(pose.pose, goal_pose.pose, velocity)) {
-      RCLCPP_INFO(logger_, "Goal reached. Stopping robot.");
+  //   if (goal_checker->isGoalReached(pose.pose, goal_pose.pose, velocity)) {
+  //     RCLCPP_INFO(logger_, "Goal reached. Stopping robot.");
 
-      // 바퀴 속도 0, 조향각 0으로 정지 명령 발행
-      publishStopCommands();
+  //     // 바퀴 속도 0, 조향각 0으로 정지 명령 발행
+  //     publishStopCommands();
 
-      // Nav2에 정지 Twist 반환
-      geometry_msgs::msg::TwistStamped stop_cmd;
-      stop_cmd.header.frame_id = pose.header.frame_id;
-      stop_cmd.header.stamp    = clock_->now();
-      stop_cmd.twist.linear.x  = 0.0;
-      stop_cmd.twist.angular.z = 0.0;
-      return stop_cmd;
-    }
-  }
+  //     // Nav2에 정지 Twist 반환
+  //     geometry_msgs::msg::TwistStamped stop_cmd;
+  //     stop_cmd.header.frame_id = pose.header.frame_id;
+  //     stop_cmd.header.stamp    = clock_->now();
+  //     stop_cmd.twist.linear.x  = 0.0;
+  //     stop_cmd.twist.angular.z = 0.0;
+  //     return stop_cmd;
+  //   }
+  // }
 
-  // ── 1. 현재 상태 추출 ─────────────────────────────────────────────────────
+  // ── 1. 현재 상태 추출 ────────────────────────────────────────────────────
   VehicleState current_state;
   current_state.x = robot_pose_in_plan_frame.pose.position.x;
   current_state.y = robot_pose_in_plan_frame.pose.position.y;
@@ -346,7 +361,13 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
     2.0 * (q.w * q.z + q.x * q.y),
     1.0 - 2.0 * (q.y * q.y + q.z * q.z));
 
-  // ── 2. N 스텝 참조 궤적 생성 ──────────────────────────────────────────────
+  // ── 2. 후진 모드 또는 제자리 회전 모드 ──────────────────────────────────────
+  geometry_msgs::msg::TwistStamped cmd_vel;
+  if (orientationModes(current_state, pose, cmd_vel)) {
+    return cmd_vel;
+  }
+
+  // ── 3. N 스텝 참조 궤적 생성 ──────────────────────────────────────────────
   std::vector<VehicleState> target_seq;
   try {
     target_seq = generateReferenceTrajectory(current_state);
@@ -357,14 +378,14 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
     return stop_cmd;
   }
 
-  // ── 3. NLopt 최적화 ────────────────────────────────────────────────────────
+  // ── 4. NLopt 최적화 ────────────────────────────────────────────────────────
   const std::vector<double> optimal_u = optimizeMPC(current_state, target_seq);
 
   // Receding Horizon: 첫 번째 스텝의 제어 입력만 실제로 인가
   const double delta_f = optimal_u[0];
   const double delta_r = optimal_u[1];
 
-  // ── 4. 워밍 스타트 갱신 ───────────────────────────────────────────────────
+  // ── 5. 워밍 스타트 갱신 ───────────────────────────────────────────────────
   // 최적 시퀀스를 한 스텝 앞으로 시프트 (Python의 np.roll + 0 패딩과 동일)
   // 동시에 NLopt 결과로 u0_ 갱신 (이미 optimal_u로 업데이트됨)
   for (size_t i = 0; i < u0_.size() - 2; ++i) {
@@ -373,22 +394,22 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   u0_[u0_.size() - 2] = 0.0;
   u0_[u0_.size() - 1] = 0.0;
 
-  // ── 5. 개별 바퀴 조향각 및 속도 계산 ────────────────────────────────────────
+  // ── 6. 개별 바퀴 조향각 및 속도 계산 ────────────────────────────────────────
   const WheelAngles steer = computeWheelAngles(delta_f, delta_r);
   const WheelVelocities vel = computeWheelVelocities(delta_f, delta_r);
 
-  // ── 6. 바퀴 명령 발행 ────────────────────────────────────────────────────
+  // ── 7. 바퀴 명령 발행 ────────────────────────────────────────────────────
   publishWheelCommands(steer, vel);
 
-  // ── 7. Nav2 표준 TwistStamped 반환 ───────────────────────────────────────
+  // ── 8. Nav2 표준 TwistStamped 반환 ───────────────────────────────────────
   // 등가 yaw rate: ω = V·cos((δf+δr)/2) / L · (δf - δr)  (논문 Eq.6에서 유도)
   const double avg_steer = (delta_f + delta_r) / 2.0;
   const double yaw_rate  = V_ref_ * std::cos(avg_steer) / L_ * (delta_f - delta_r);
 
-  geometry_msgs::msg::TwistStamped cmd_vel;
+  //geometry_msgs::msg::TwistStamped cmd_vel;
   cmd_vel.header.frame_id = pose.header.frame_id;
   cmd_vel.header.stamp    = clock_->now();
-  cmd_vel.twist.linear.x  = V_ref_;
+  cmd_vel.twist.linear.x  = current_v_ref_;
   cmd_vel.twist.angular.z = yaw_rate;
 
   return cmd_vel;
@@ -404,9 +425,9 @@ VehicleState MpcUFRWSController::ufrwsModel(
   const double avg = (delta_f + delta_r) / 2.0;
 
   VehicleState next;
-  next.x = state.x + V_ref_ * std::cos(state.theta + avg) * dt_;
-  next.y = state.y + V_ref_ * std::sin(state.theta + avg) * dt_;
-  next.theta = normalizeAngle(state.theta + (V_ref_ * std::cos(avg) / L_) * (delta_f - delta_r) * dt_);
+  next.x = state.x + current_v_ref_ * std::cos(state.theta + avg) * dt_;
+  next.y = state.y + current_v_ref_ * std::sin(state.theta + avg) * dt_;
+  next.theta = normalizeAngle(state.theta + (current_v_ref_ * std::cos(avg) / L_) * (delta_f - delta_r) * dt_);
 
   return next;
 }
@@ -605,6 +626,10 @@ std::vector<VehicleState> MpcUFRWSController::generateReferenceTrajectory(
         1.0 - 2.0 * (ori.y * ori.y + ori.z * ori.z));
     }
 
+    if (is_reversing_) {
+      ref.theta = normalizeAngle(ref.theta + M_PI);
+    }
+
     // crab walking 테스트하려면 아래 주석 해제하고 ref.theta = 0 으로 지정 
     // (heading angle 항상 정면으로 고정)
     // ref.theta = 0;
@@ -675,6 +700,67 @@ std::vector<VehicleState> MpcUFRWSController::generateReferenceTrajectory(
   return ref_seq;
 }
 
+// ── 경로 추종 모드 설정 ────────────────────────────────────────────────
+
+bool MpcUFRWSController::orientationModes(
+  const VehicleState current_state,
+  const geometry_msgs::msg::PoseStamped & pose,
+  geometry_msgs::msg::TwistStamped & cmd_vel)
+{
+  current_v_ref_ = V_ref_;
+  is_reversing_ = false;
+
+  if (global_plan_.poses.size() < 2) return false;
+
+  size_t lookahead_idx = std::min(global_plan_.poses.size() - 1, static_cast<size_t>(10));
+  double dx = global_plan_.poses[lookahead_idx].pose.position.x - current_state.x;
+  double dy = global_plan_.poses[lookahead_idx].pose.position.y - current_state.y;
+  double path_angle = std::atan2(dy, dx);
+
+  // 로봇의 현재 heading과 경로 방향의 오차 계산
+  double angle_diff = normalizeAngle(path_angle - current_state.theta);
+
+  // 1. 제자리 회전 모드
+  if (point_turning_mode_) {
+    if (!is_point_turning_ && std::abs(angle_diff) > M_PI_4) {  // 45deg 이상 오차
+      is_point_turning_ = true;
+      RCLCPP_INFO(logger_, "Heading angle error: %.1f deg. Start point turn.", angle_diff * 180.0 / M_PI);
+    } else if (is_point_turning_ && std::abs(angle_diff) < 0.08) {  // 약 5도 이내 오차
+      is_point_turning_ = false;
+      RCLCPP_INFO(logger_, "Align completed.");
+    }
+
+    if (is_point_turning_) {
+      WheelAngles steer;
+      WheelVelocities vel;
+
+       // 제자리 회전 각속도 (+: CCW, -: CW)
+      double target_yaw_rate = (angle_diff > 0) ? 0.7 : -0.7;
+
+      computePointTurnCommands(target_yaw_rate, steer, vel);
+
+      publishWheelCommands(steer, vel);
+
+      cmd_vel.header.frame_id = pose.header.frame_id;
+      cmd_vel.header.stamp    = clock_->now();
+      cmd_vel.twist.linear.x  = 0.0;
+      cmd_vel.twist.angular.z = target_yaw_rate;
+
+      return true;
+    }
+  }
+
+  // 2. 후진 모드
+  if (reversing_mode_) {
+    if (std::abs(angle_diff) > M_PI_2) {
+      is_reversing_ = true;
+      current_v_ref_ = -V_ref_;
+    }
+  }
+
+  return false;
+}
+
 // ── Ackermann 기하학: 등가 조향각 → 개별 바퀴 조향각 (논문 Eq.1) ────────────
 
 WheelAngles MpcUFRWSController::computeWheelAngles(double delta_f, double delta_r) const
@@ -719,7 +805,7 @@ WheelVelocities MpcUFRWSController::computeWheelVelocities(double delta_f, doubl
   // 직진 또는 완벽한 크랩 주행 (ICR이 무한대인 경우)
   if (std::abs(diff) < 1e-5)
   {
-    const double default_rad_speed = V_ref_ / wheel_radius_;
+    const double default_rad_speed = current_v_ref_ / wheel_radius_;
     wv.fl = default_rad_speed;
     wv.fr = default_rad_speed;
     wv.rl = default_rad_speed;
@@ -741,13 +827,41 @@ WheelVelocities MpcUFRWSController::computeWheelVelocities(double delta_f, doubl
     const double R_rr = std::hypot(-Lr_ - X_c, -W_ / 2.0 - Y_c); // Rear-Right
 
     // 선속도를 각속도[rad/s]로 변환하여 구조체에 저장 (v_i = V_ref * R_i / R_M)
-    wv.fl = (V_ref_ * (R_fl / R_M)) / wheel_radius_;
-    wv.fr = (V_ref_ * (R_fr / R_M)) / wheel_radius_;
-    wv.rl = (V_ref_ * (R_rl / R_M)) / wheel_radius_;
-    wv.rr = (V_ref_ * (R_rr / R_M)) / wheel_radius_;
+    wv.fl = (current_v_ref_ * (R_fl / R_M)) / wheel_radius_;
+    wv.fr = (current_v_ref_ * (R_fr / R_M)) / wheel_radius_;
+    wv.rl = (current_v_ref_ * (R_rl / R_M)) / wheel_radius_;
+    wv.rr = (current_v_ref_ * (R_rr / R_M)) / wheel_radius_;
   }
 
   return wv;
+}
+
+// ── 4WIS 모델의 제자리 회전 속도 ────────────────────────────────────────────────
+void MpcUFRWSController::computePointTurnCommands(
+  double target_yaw_rate,
+  WheelAngles & steer,
+  WheelVelocities & vel) const
+{
+  double gamma_f = std::atan2(W_ / 2.0, Lf_);
+  double gamma_r = std::atan2(W_ / 2.0, Lr_);
+
+  // 각 바퀴의 장착 위치에서 ICR까지의 거리 계산
+  const double R_fl = std::hypot(Lf_, W_ / 2.0);
+  const double R_fr = std::hypot(Lf_, W_ / 2.0);
+  const double R_rl = std::hypot(Lr_, W_ / 2.0);
+  const double R_rr = std::hypot(Lr_, W_ / 2.0);
+
+  // 바퀴 조향각
+  steer.fl = -(M_PI_2 - gamma_f);
+  steer.fr =  (M_PI_2 - gamma_f);
+  steer.rl =  (M_PI_2 - gamma_r);
+  steer.rr = -(M_PI_2 - gamma_r);
+
+  // 바퀴 각속도
+  vel.fl = (-target_yaw_rate * R_fl) / wheel_radius_;
+  vel.fr = (target_yaw_rate * R_fr) / wheel_radius_;
+  vel.rl = (-target_yaw_rate * R_rl) / wheel_radius_;
+  vel.rr = (target_yaw_rate * R_rr) / wheel_radius_;
 }
 
 // ── 정지 명령 발행 ─────────────────────────────────────────────────────────────
