@@ -1,31 +1,3 @@
-/*
- * MPC-UFRWS (Model Predictive Control - Unconstrained Front Rear Wheel Steering)
- * Nav2 Custom Controller Plugin — NLopt 실시간 최적화 버전 구현
- *
- * Based on: "Optimal Control Method of Path Tracking for Four-Wheel Steering Vehicles"
- * Tan, X.; Liu, D.; Xiong, H. Actuators 2022, 11, 61.
- * https://doi.org/10.3390/act11020061
- *
- * ┌─────────────────────────────────────────────────────────────────┐
- * │  최적화 교체 요약                                                │
- * │                                                                  │
- * │  Python (SciPy)          →  C++ (NLopt)                         │
- * │  ─────────────────────────────────────────────────────────────  │
- * │  scipy.optimize.minimize     nlopt::opt (LD_SLSQP)              │
- * │  method='SLSQP'          →  nlopt::LD_SLSQP (동일 알고리즘)    │
- * │  bounds=[(-ms,ms)]*2N    →  set_lower/upper_bounds()            │
- * │  options={'maxiter':20}  →  set_maxeval()                       │
- * │  warm start (u0 shift)   →  u0_ 벡터 rotate + 포인터 재사용    │
- * │                                                                  │
- * │  실시간 성능 최적화:                                             │
- * │  - nlopt::opt 객체를 configure()에서 1회 생성 후 재사용         │
- * │    → 매 제어 주기 동적 할당/해제 비용 제거                      │
- * │  - set_min_objective()로 콜백 데이터 포인터만 교체              │
- * │    → std::vector deepcopy 없음                                   │
- * │  - roundoff_limited 예외 → 현재까지 최적해 사용 (실시간 안전)   │
- * └─────────────────────────────────────────────────────────────────┘
- */
-
 #include <algorithm>
 #include <cmath>
 #include <string>
@@ -57,16 +29,7 @@ double MpcUFRWSController::normalizeAngle(double angle)
   return angle;
 }
 
-// ── NLopt 목적 함수 콜백 (static) ────────────────────────────────────────────
-//
-// NLopt은 LD_SLSQP 알고리즘에서 기울기를 요구한다.
-// grad 벡터가 비어 있지 않으면 전진 유한 차분으로 수치 기울기를 채운다.
-//
-// 수치 기울기 비용: mpcCost를 (2N + 1)번 호출
-//   → N=10 기준 21번 / NLopt 반복당
-//   → SLSQP는 QP 서브문제를 효율적으로 풀기 때문에
-//     반복 횟수 자체가 Armijo 경사 하강보다 훨씬 적음
-//
+// ── NLopt 목적 함수 콜백 ───────────────────────────────────────────────────────
 double MpcUFRWSController::nloptObjectiveCb(
   const std::vector<double> & u,
   std::vector<double> & grad,
@@ -77,7 +40,7 @@ double MpcUFRWSController::nloptObjectiveCb(
   // 현재 점에서 비용 계산
   const double cost = d->controller->mpcCost(u, *d->current_state, *d->target_seq);
 
-  // 기울기가 필요할 때만 유한 차분 계산 (LN 계열 알고리즘이면 grad가 비어 있음)
+  // 기울기가 필요할 때만 유한 차분 계산
   if (!grad.empty()) {
     std::vector<double> u_plus = u;           // 한 번만 복사, 이후 원소별 교란
     const double eps = d->eps;
@@ -85,7 +48,7 @@ double MpcUFRWSController::nloptObjectiveCb(
     for (size_t i = 0; i < u.size(); ++i) {
       u_plus[i] += eps;
       grad[i] = (d->controller->mpcCost(u_plus, *d->current_state, *d->target_seq) - cost) / eps;
-      u_plus[i] = u[i];                       // 원상 복구 (재할당 없음)
+      u_plus[i] = u[i];                       // 원상 복구
     }
   }
 
@@ -214,20 +177,11 @@ void MpcUFRWSController::configure(
   u0_.assign(n_ctrl, 0.0);
 
   // ── NLopt 옵티마이저 초기화 (1회, 이후 재사용) ───────────────────────────────
-  //
   // 알고리즘: LD_SLSQP
-  //   - Sequential Least-Squares Quadratic Programming
-  //   - SciPy method='SLSQP'과 동일 알고리즘
-  //   - 박스 제약 + 비선형 목적 함수에 최적
-  //   - 기울기 정보를 사용하므로 LN(미분 불필요) 계열보다 수렴이 빠름
-  //
-  // 대안 알고리즘 (필요 시 교체):
-  //   nlopt::LD_LBFGS  → 제약 없는 문제에서 더 빠름 (박스 제약은 투영 처리)
-  //   nlopt::LD_MMA    → 복잡한 비선형 제약이 추가될 때 유리
   //
   nlopt_opt_ = std::make_unique<nlopt::opt>(nlopt::LD_SLSQP, n_ctrl);
 
-  // 박스 제약 설정 (configure에서 1회 설정 → 재사용 시 재설정 불필요)
+  // 박스 제약 설정
   std::vector<double> lb(n_ctrl, -max_steer_);
   std::vector<double> ub(n_ctrl,  max_steer_);
   nlopt_opt_->set_lower_bounds(lb);
@@ -386,8 +340,6 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   const double delta_r = optimal_u[1];
 
   // ── 5. 워밍 스타트 갱신 ───────────────────────────────────────────────────
-  // 최적 시퀀스를 한 스텝 앞으로 시프트 (Python의 np.roll + 0 패딩과 동일)
-  // 동시에 NLopt 결과로 u0_ 갱신 (이미 optimal_u로 업데이트됨)
   for (size_t i = 0; i < u0_.size() - 2; ++i) {
     u0_[i] = optimal_u[i + 2];
   }
@@ -402,7 +354,7 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   publishWheelCommands(steer, vel);
 
   // ── 8. Nav2 표준 TwistStamped 반환 ───────────────────────────────────────
-  // 등가 yaw rate: ω = V·cos((δf+δr)/2) / L · (δf - δr)  (논문 Eq.6에서 유도)
+  // 등가 yaw rate: ω = V·cos((δf+δr)/2) / L · (δf - δr)
   const double avg_steer = (delta_f + delta_r) / 2.0;
   const double yaw_rate  = V_ref_ * std::cos(avg_steer) / L_ * (delta_f - delta_r);
 
@@ -481,14 +433,6 @@ double MpcUFRWSController::mpcCost(
 }
 
 // ── NLopt 최적화 (핵심: 실시간 최적화 루프) ──────────────────────────────────
-//
-// 실행 흐름:
-//   1. 콜백 데이터 포인터 갱신 (O(1), 복사 없음)
-//   2. 목적 함수 재등록 (옵티마이저 객체 재사용)
-//   3. 초기값 u = u0_ (워밍 스타트)
-//   4. NLopt::optimize() 호출 → LD_SLSQP 수렴
-//   5. 예외 처리: roundoff_limited → 부분 최적해 사용 (실시간 안전)
-//
 std::vector<double> MpcUFRWSController::optimizeMPC(
   const VehicleState & current_state,
   const std::vector<VehicleState> & target_seq)
@@ -512,14 +456,13 @@ std::vector<double> MpcUFRWSController::optimizeMPC(
   try {
     nlopt::result result = nlopt_opt_->optimize(u, min_cost);
 
-    // 수렴 결과 로깅 (DEBUG 레벨 → 릴리즈 빌드에서 오버헤드 없음)
+    // 수렴 결과 로깅
     RCLCPP_DEBUG(logger_,
       "NLopt result: %d (1=success, 3=ftol, 4=xtol, 5=maxeval), cost=%.6f",
       static_cast<int>(result), min_cost);
 
   } catch (const nlopt::roundoff_limited &) {
-    // 수치 정밀도 한계에 도달 → 현재까지의 최적해를 안전하게 사용
-    // 실시간 시스템에서는 정지보다 부분 최적해가 훨씬 안전
+    // 수치 정밀도 한계에 도달하면 현재까지의 최적해를 안전하게 사용
     RCLCPP_DEBUG(logger_,
       "NLopt: roundoff_limited, using best solution found (cost=%.6f).", min_cost);
 
@@ -527,7 +470,7 @@ std::vector<double> MpcUFRWSController::optimizeMPC(
     RCLCPP_WARN(logger_, "NLopt: forced_stop triggered.");
 
   } catch (const std::exception & e) {
-    // 복구 불가 예외 → 워밍 스타트(이전 해)를 폴백으로 반환
+    // 복구 불가 예외 -> 워밍 스타트(이전 해)를 폴백으로 반환
     RCLCPP_ERROR(logger_,
       "NLopt exception: %s. Falling back to warm-start solution.", e.what());
     return u0_;
@@ -634,66 +577,6 @@ std::vector<VehicleState> MpcUFRWSController::generateReferenceTrajectory(
     // (heading angle 항상 정면으로 고정)
     // ref.theta = 0;
 
-  ///////////// ref.theta 계산하는 다른 방법 (작성중) ///////////
-  // // 차체 방향의 기준점 (초기값은 현재 로봇의 방향)
-  // double prev_theta = current_state.theta;
-
-  // // 크랩 워킹 허용 임계값: 최대 조향각의 85%만 경로 추종에 사용하고 15%는 오차 보정용으로 남김
-  // const double crab_limit = max_steer_ * 0.85;
-
-  // for (int i = 0; i < N_; ++i) {
-  //   const double target_dist = step_dist * static_cast<double>(i + 1);
-  //   double accumulated = 0.0;
-  //   size_t sel_idx     = closest_idx;
-
-  //   // 타겟 거리만큼 앞선 경로점 찾기
-  //   for (size_t k = closest_idx; k + 1 < n_poses; ++k) {
-  //     const double seg_dx = poses[k + 1].pose.position.x - poses[k].pose.position.x;
-  //     const double seg_dy = poses[k + 1].pose.position.y - poses[k].pose.position.y;
-  //     accumulated += std::hypot(seg_dx, seg_dy);
-  //     sel_idx = k + 1;
-  //     if (accumulated >= target_dist) {
-  //       break;
-  //     }
-  //   }
-
-  //   VehicleState ref;
-  //   ref.x = poses[sel_idx].pose.position.x;
-  //   ref.y = poses[sel_idx].pose.position.y;
-
-  //   // 4-1. 경로의 기하학적 접선 각도(주행 궤적 방향, alpha) 계산
-  //   double alpha = 0.0;
-  //   if (sel_idx + 1 < n_poses) {
-  //     const double dx = poses[sel_idx + 1].pose.position.x - poses[sel_idx].pose.position.x;
-  //     const double dy = poses[sel_idx + 1].pose.position.y - poses[sel_idx].pose.position.y;
-  //     alpha = std::atan2(dy, dx);
-  //   } else if (sel_idx > 0) {
-  //     const double dx = poses[sel_idx].pose.position.x - poses[sel_idx - 1].pose.position.x;
-  //     const double dy = poses[sel_idx].pose.position.y - poses[sel_idx - 1].pose.position.y;
-  //     alpha = std::atan2(dy, dx);
-  //   } else {
-  //     const auto & ori = poses[sel_idx].pose.orientation;
-  //     alpha = std::atan2(
-  //       2.0 * (ori.w * ori.z + ori.x * ori.y),
-  //       1.0 - 2.0 * (ori.y * ori.y + ori.z * ori.z));
-  //   }
-
-  //   // 4-2. 크랩 앵글(beta) 계산: 주행해야 할 방향(alpha)과 현재 차체 방향(prev_theta)의 차이
-  //   double beta = normalizeAngle(alpha - prev_theta);
-
-  //   // 4-3. 임계값 기반 조향 (Threshold-based Crab Walking)
-  //   if (std::abs(beta) <= crab_limit) {
-  //     // 바퀴만 꺾어서(크랩 워킹) 이동 가능하므로 차체 방향 유지
-  //     ref.theta = prev_theta;
-  //   } else {
-  //     // 꺾임이 너무 심해서 한계치 초과 -> 초과한 만큼만 차체를 회전시킴
-  //     // copysign(1.0, beta)는 beta의 부호(+ 또는 -)를 반환합니다.
-  //     ref.theta = normalizeAngle(alpha - (std::copysign(1.0, beta) * crab_limit));
-  //   }
-
-  //   // 다음 스텝의 기준 차체 방향 업데이트
-  //   prev_theta = ref.theta;
-
     ref_seq.push_back(ref);
   }
 
@@ -761,7 +644,7 @@ bool MpcUFRWSController::orientationModes(
   return false;
 }
 
-// ── Ackermann 기하학: 등가 조향각 → 개별 바퀴 조향각 (논문 Eq.1) ────────────
+// ── 조향각 계산 ─────────────────────────────────────────────────────────────
 
 WheelAngles MpcUFRWSController::computeWheelAngles(double delta_f, double delta_r) const
 {
@@ -775,12 +658,12 @@ WheelAngles MpcUFRWSController::computeWheelAngles(double delta_f, double delta_
     };
 
   WheelAngles w;
-  w.fl = safe_atan(tan_df, 1.0 - denom);  // Front-Left
-  w.fr = safe_atan(tan_df, 1.0 + denom);  // Front-Right
-  w.rl = safe_atan(tan_dr, 1.0 - denom);  // Rear-Left
-  w.rr = safe_atan(tan_dr, 1.0 + denom);  // Rear-Right
+  w.fl = safe_atan(tan_df, 1.0 - denom);  // Front Left
+  w.fr = safe_atan(tan_df, 1.0 + denom);  // Front Right
+  w.rl = safe_atan(tan_dr, 1.0 - denom);  // Rear Left
+  w.rr = safe_atan(tan_dr, 1.0 + denom);  // Rear Right
 
-  // 안전 클리핑 (actuator 한계)
+  // 안전 클리핑
   auto clip = [&](double v) {
       return std::max(-max_steer_, std::min(max_steer_, v));
     };
@@ -873,7 +756,7 @@ void MpcUFRWSController::publishStopCommands()
   drive_msg.data = {0.0, 0.0, 0.0, 0.0};
   pub_drive_->publish(drive_msg);
 
-  // 조향각 0 (중립)
+  // 조향각 0
   std_msgs::msg::Float64MultiArray steer_msg;
   steer_msg.data = {0.0, 0.0, 0.0, 0.0};
   pub_steer_->publish(steer_msg);
@@ -888,7 +771,7 @@ void MpcUFRWSController::publishWheelCommands(const WheelAngles & steer, const W
   steer_msg.data = {steer.fl, steer.fr, steer.rl, steer.rr};
   pub_steer_->publish(steer_msg);
 
-  // 구동 속도 명령: [FL, FR, RL, RR] — 등속 단순 가정
+  // 구동 속도 명령: [FL, FR, RL, RR]
   std_msgs::msg::Float64MultiArray drive_msg;
   drive_msg.data = {vel.fl, vel.fr, vel.rl, vel.rr};
   pub_drive_->publish(drive_msg);

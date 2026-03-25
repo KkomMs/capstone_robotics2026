@@ -66,7 +66,7 @@ bt_navigator:
     global_frame: map
     robot_base_frame: base_footprint
     odom_topic: /odom
-    default_bt_xml_filename: "navigate_w_replanning_and_recovery.xml"
+    # default_bt_xml_filename: "my_nav2_replanning_and_recovery.xml"
     bt_loop_duration: 10
     default_server_timeout: 20
     enable_groot_monitoring: True
@@ -104,6 +104,7 @@ bt_navigator:
     - nav2_planner_selector_bt_node
     - nav2_controller_selector_bt_node
     - nav2_goal_checker_selector_bt_node
+    - nav2_smooth_path_action_bt_node
 
 bt_navigator_rclcpp_node:
   ros__parameters:
@@ -298,7 +299,7 @@ local_costmap:
       plugins: ["obstacle_layer", "voxel_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.4
+        inflation_radius: 0.55
         cost_scaling_factor: 3.0
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -391,7 +392,7 @@ global_costmap:
         map_subscribe_transient_local: true
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.45
+        inflation_radius: 0.55  
         cost_scaling_factor: 3.0
       always_send_full_costmap: true
   global_costmap_client:
@@ -419,9 +420,6 @@ planner_server:
     use_sim_time: True                  # add
     expected_planner_frequency: 20.0
     planner_plugins: ["GridBased"]
-    # GridBased:
-    #   plugin: "fwis_straightline_planner/StraightLine" 
-    #   interpolation_resolution: 0.1
     GridBased:
       plugin: "nav2_smac_planner/SmacPlanner2D" # In Iron and older versions, "/" was used instead of "::"
       tolerance: 0.125                      # tolerance for planning if unable to reach exact pose, in meters
@@ -447,6 +445,18 @@ planner_server:
 planner_server_rclcpp_node:
   ros__parameters:
     use_sim_time: True
+
+smoother_server:
+  ros__parameters:
+    use_sim_time: True
+    smoother_plugins: ["simple_smoother"]
+    simple_smoother:
+      plugin: "nav2_smoother::SimpleSmoother"
+      tolerance: 1.0e-10
+      max_its: 1000
+      do_refinement: True
+      check_for_collisions: True 
+      cost_check_patience: 2.0
 
 recoveries_server:
   ros__parameters:
