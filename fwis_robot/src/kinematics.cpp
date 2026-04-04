@@ -126,6 +126,20 @@ std::vector<WheelState> Kinematics::InverseKinematics(double linear_x, double li
             target_speed *= -1.0;   // 구동 바퀴 방향 뒤집기
         }
 
+        double final_angle = current_angle_rad + ang_diff;
+
+        // 조향각을 -pi ~ pi 사이로 clamping
+        if (final_angle > M_PI || final_angle < -M_PI) {
+            if (final_angle > M_PI) {
+                final_angle -= M_PI;
+            } else {
+                final_angle += M_PI;
+            }
+            target_speed *= -1.0;
+        }
+        
+        final_angle = std::max(-M_PI, std::min(M_PI, final_angle));     // 최종 clamp
+
         commands[i].wheel_vel = target_speed;   // [m/s]
         commands[i].steering_ang = (current_angle_rad + ang_diff) * 180.0 / M_PI;   // [deg]
     }
