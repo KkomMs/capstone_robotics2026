@@ -1,0 +1,502 @@
+<robot name="mobile_assembly">
+  <link name="base_footprint">
+  </link>
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_footprint" />
+    <child link="base_link" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+  </joint>
+
+  <link name="base_link">
+    <inertial>
+      <origin
+        xyz="0.000154338729897341 0.000519187785971403 0.102508036106042" rpy="0 0 0" />
+      <mass value="19.5136122526707" />
+      <inertia
+        ixx="0.08"
+        ixy="0"
+        ixz="0.00006"
+        iyy="0.09"
+        iyz="0"
+        izz="0.16" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/base_link.STL"
+          scale="1 1 1" />
+      </geometry>
+      <material name="">
+        <color rgba="0.627450980392157 0.627450980392157 0.627450980392157 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/base_link.STL"
+          scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="drive1_axis">
+    <inertial>
+      <origin xyz="-1.74664221512799E-05 0.000342500867427764 -0.0212849883195494" rpy="0 0 0" />
+      <mass value="0.454337488928621" />
+      <inertia
+        ixx="0.0007"
+        ixy="0"
+        ixz="0"
+        iyy="0.0007"
+        iyz="0"
+        izz="0.001" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/dir1_link.STL"
+          scale="1 1 1" />
+      </geometry>
+      <material name="">
+        <color rgba="0.8 0.8 0.8 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/dir1_link.STL"
+          scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="drive1_axis_joint" type="continuous">
+    <origin xyz="0.215 0.215 0.09" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="drive1_axis" />
+    <limit effort="2.0" lower="-3.14" upper="3.14" velocity="6.81" />
+    <axis xyz="0 0 1" />
+  </joint>
+  <link name="motor1_axis">
+    <inertial>
+      <origin xyz="-5.55111512312578E-17 -5.55111512312578E-17 3.63207727782644E-18" rpy="0 0 0" />
+      <mass value="0.661505484221104" />
+      <inertia
+        ixx="0.0007"
+        ixy="0"
+        ixz="0"
+        iyy="0.001"
+        iyz="0"
+        izz="0.0007" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/motor1_link.STL"
+          scale="1 1 1" />
+      </geometry>
+      <material name="">
+        <color rgba="0.0980392156862745 0.0980392156862745 0.0980392156862745 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/motor1_link.STL"
+          scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="motor1_axis_joint" type="continuous">
+    <origin xyz="0 0 -0.1" rpy="0 0 0" />
+    <parent link="drive1_axis" />
+    <child link="motor1_axis" />
+    <limit effort="12.0" velocity="58.64" />
+    <axis xyz="0 1 0" />
+  </joint>
+  <link name="drive2_axis">
+    <inertial>
+      <origin xyz="-2.36907715667201E-12 0.000342945943395262 -0.0212849883196075" rpy="0 0 0" />
+      <mass value="0.454337488928768" />
+      <inertia
+        ixx="0.0007"
+        ixy="0"
+        ixz="0"
+        iyy="0.0007"
+        iyz="0"
+        izz="0.001" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/dir2_link.STL"
+          scale="1 1 1" />
+      </geometry>
+      <material name="">
+        <color rgba="0.8 0.8 0.8 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/dir2_link.STL"
+          scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="drive2_axis_joint" type="continuous">
+    <origin xyz="0.215 -0.215 0.09" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="drive2_axis" />
+    <limit effort="2.0" lower="-3.14" upper="3.14" velocity="6.81" />
+    <axis xyz="0 0 1" />
+  </joint>
+  <link name="motor2_axis">
+    <inertial>
+      <origin xyz="1.11022302462516E-16 1.49077798716757E-18 -8.13151629364128E-19" rpy="0 0 0" />
+      <mass value="0.661505484221105" />
+      <inertia
+        ixx="0.0007"
+        ixy="0"
+        ixz="0"
+        iyy="0.001"
+        iyz="0"
+        izz="0.0007" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/motor2_link.STL"
+          scale="1 1 1" />
+      </geometry>
+      <material name="">
+        <color rgba="0.0980392156862745 0.0980392156862745 0.0980392156862745 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/motor2_link.STL"
+          scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="motor2_axis_joint" type="continuous">
+    <origin xyz="0 0 -0.1" rpy="0 0 0" />
+    <parent link="drive2_axis" />
+    <child link="motor2_axis" />
+    <limit effort="12.0" velocity="58.64" />
+    <axis xyz="0 1 0" />
+  </joint>
+  <link name="drive3_axis">
+    <inertial>
+      <origin xyz="-2.36897095906921E-12 0.000342945943395476 -0.0212849883196075" rpy="0 0 0" />
+      <mass value="0.454337488928768" />
+      <inertia
+        ixx="0.0007"
+        ixy="0"
+        ixz="0"
+        iyy="0.0007"
+        iyz="0"
+        izz="0.001" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/dir3_link.STL"
+          scale="1 1 1" />
+      </geometry>
+      <material name="">
+        <color rgba="0.8 0.8 0.8 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/dir3_link.STL"
+          scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="drive3_axis_joint" type="continuous">
+    <origin xyz="-0.215 0.215 0.09" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="drive3_axis" />
+    <limit effort="2.0" lower="-3.14" upper="3.14" velocity="6.81" />
+    <axis xyz="0 0 1" />
+  </joint>
+  <link name="motor3_axis">
+    <inertial>
+      <origin xyz="-6.7762635780344E-19 2.37169225231204E-18 -1.35525271560688E-18" rpy="0 0 0" />
+      <mass value="0.661505484221104" />
+      <inertia
+        ixx="0.0007"
+        ixy="0"
+        ixz="0"
+        iyy="0.001"
+        iyz="0"
+        izz="0.0007" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/motor3_link.STL"
+          scale="1 1 1" />
+      </geometry>
+      <material name="">
+        <color rgba="0.0980392156862745 0.0980392156862745 0.0980392156862745 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/motor3_link.STL"
+          scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="motor3_axis_joint" type="continuous">
+    <origin xyz="0 0 -0.1" rpy="0 0 0" />
+    <parent link="drive3_axis" />
+    <child link="motor3_axis" />
+    <limit effort="12.0" velocity="58.64" />
+    <axis xyz="0 1 0" />
+  </joint>
+  <link name="drive4_axis">
+    <inertial>
+      <origin xyz="-2.36896049651825E-12 0.000342945943395512 -0.0212849883196075" rpy="0 0 0" />
+      <mass value="0.454337488928768" />
+      <inertia
+        ixx="0.0007"
+        ixy="0"
+        ixz="0"
+        iyy="0.0007"
+        iyz="0"
+        izz="0.001" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/dir4_link.STL"
+          scale="1 1 1" />
+      </geometry>
+      <material name="">
+        <color rgba="0.8 0.8 0.8 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/dir4_link.STL"
+          scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="drive4_axis_joint" type="continuous">
+    <origin xyz="-0.215 -0.215 0.09" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="drive4_axis" />
+    <limit effort="2.0" lower="-3.14" upper="3.14" velocity="6.81" />
+    <axis xyz="0 0 1" />
+  </joint>
+  <link name="motor4_axis">
+    <inertial>
+      <origin xyz="-4.33680868994202E-19 0 2.71050543121376E-19" rpy="0 0 0" />
+      <mass value="0.661505484221105" />
+      <inertia
+        ixx="0.0007"
+        ixy="0"
+        ixz="0"
+        iyy="0.001"
+        iyz="0"
+        izz="0.0007" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/motor4_link.STL"
+          scale="1 1 1" />
+      </geometry>
+      <material name="">
+        <color rgba="0.0980392156862745 0.0980392156862745 0.0980392156862745 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/motor4_link.STL"
+          scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="motor4_axis_joint" type="continuous">
+    <origin xyz="0 0 -0.1" rpy="0 0 0" />
+    <parent link="drive4_axis" />
+    <child link="motor4_axis" />
+    <limit effort="12.0" velocity="58.64" />
+    <axis xyz="0 1 0" />
+  </joint>
+
+  <!-- =============== Imu & Lidar =============== -->
+  <link name="imu_link">
+    <inertial>
+      <origin xyz="5.26055032867845E-11 6.88395174197609E-11 0.206176522322599" rpy="0 0 0" />
+      <mass value="0.0120002513274123" />
+      <inertia
+        ixx="0"
+        ixy="0"
+        ixz="0"
+        iyy="0"
+        iyz="0"
+        izz="0" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/imu_link.STL"
+          scale="1 1 1" />
+      </geometry>
+      <material name="">
+        <color rgba="0.964705882352941 0.964705882352941 0.952941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/imu_link.STL"
+          scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="imu_joint" type="fixed">
+    <origin xyz="0 0 -0.0357" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="imu_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="lidar_link">
+    <inertial>
+      <origin xyz="-0.000943155147524105 0.000109183625657844 -0.0114789211211224" rpy="0 0 0" />
+      <mass value="0.0853398661286776" />
+      <inertia
+        ixx="0.0001"
+        ixy="0"
+        ixz="0"
+        iyy="0.0001"
+        iyz="0"
+        izz="0.0001" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/lidar_link.STL"
+          scale="1 1 1" />
+      </geometry>
+      <material name="">
+        <color rgba="0.627450980392157 0.627450980392157 0.627450980392157 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/lidar_link.STL"
+          scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="lidar_joint" type="fixed">
+    <origin xyz="0 0 -0.0357" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="lidar_link" />
+  </joint>
+
+  <!-- =============== Scanners =============== -->
+  <link name="scanner1_link">
+    <inertial>
+      <origin xyz="-0.0266164289427567 0.0809928961412583 0.000176016302953885" rpy="0 0 0" />
+      <mass value="0.380816890715382"/>
+      <inertia
+        ixx="0.0002"
+        ixy="0"
+        ixz="0"
+        iyy="0.0004"
+        iyz="0"
+        izz="0.0005" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/scanner1_link.STL"
+          scale="1 1 1" />
+      </geometry>
+      <material name="">
+        <color rgba="0.0980392156862745 0.0980392156862745 0.0980392156862745 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/scanner1_link.STL"
+          scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="scanner1_joint" type="continuous">
+    <origin xyz="0.0271 0.0918 0.3976" rpy="0 0 0"/>
+    <parent link="base_link" />
+    <child link="scanner1_link" />
+    <limit effort="2.5" lower="-3.14" upper="3.14" velocity="6.7" />
+    <axis xyz="1 0 0" />
+  </joint>
+  <link name="scanner2_link">
+    <inertial>
+      <origin xyz="0.026616428443226 -0.0806280113590046 0.00768142023144541" rpy="0 0 0" />
+      <mass value="0.380816890715382"/>
+      <inertia
+        ixx="0.0002"
+        ixy="0"
+        ixz="0"
+        iyy="0.0004"
+        iyz="0"
+        izz="0.0005" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/scanner2_link.STL"
+          scale="1 1 1" />
+      </geometry>
+      <material name="">
+        <color rgba="0.0980392156862745 0.0980392156862745 0.0980392156862745 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="file://$(find fwis_robot)/models/mobile_assembly/meshes/scanner2_link.STL"
+          scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="scanner2_joint" type="continuous">
+    <origin xyz="-0.0271 -0.0918 0.3976" rpy="0 0 0"/>
+    <parent link="base_link" />
+    <child link="scanner2_link" />
+    <limit effort="2.5" lower="-3.14" upper="3.14" velocity="6.7" />
+    <axis xyz="-1 0 0" />
+  </joint>
+</robot>

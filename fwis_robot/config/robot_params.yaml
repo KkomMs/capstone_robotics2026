@@ -1,0 +1,115 @@
+# config/robot_params.yaml
+
+defaults:
+  ros__parameters:
+    # ───────── Frames ─────────
+    common_frames: &common_frames
+      base_frame_id: "base_footprint"
+      odom_frame_id: "odom"
+      front_left_steer_joint:  "drive1_axis_joint"      # [FL 조향 모터]
+      front_right_steer_joint: "drive2_axis_joint"      # [FR 조향 모터]
+      rear_left_steer_joint:   "drive3_axis_joint"      # [RL 조향 모터]
+      rear_right_steer_joint:  "drive4_axis_joint"      # [RR 조향 모터]
+      front_left_inwheel_joint:  "motor1_axis_joint"    # [FL 인휠 모터]
+      front_right_inwheel_joint: "motor2_axis_joint"    # [FR 인휠 모터]
+      rear_left_inwheel_joint:   "motor3_axis_joint"    # [RL 인휠 모터]
+      rear_right_inwheel_joint:  "motor4_axis_joint"    # [RR 인휠 모터]
+
+    # ───────── Kinematics / Geometry ─────────
+      common_geom: &common_geom
+        wheel_radius: 0.0695          # [m]
+        wheel_x_offset: 0.215         # [m] 로봇 중심 -> 바퀴 중심 (전후)
+        wheel_y_offset: 0.215         # [m] 로봇 중심 -> 바퀴 중심 (좌우)
+        wheel_max_rpm: 560.0          # [rpm] 인휠 모터 최대 rpm
+        steer_max_rpm: 65.0           # [rpm] 조향 모터 최대 rpm
+
+    # ───────── Controller ─────────
+    #  - 로봇 이동 속도 제한
+      common_ctrl: &common_ctrl
+        use_rate_limit: false         # true: 가속도 제한, false: step 스무딩
+        bound_cmd_speed: 0.15         # [m/s] step: 목표-현재 허용 오차 (선속도)
+        add_cmd_speed: 0.02           # [m/s] step 스무딩 tick당 증분 (선속도)
+        bound_cmd_ang_speed: 0.15     # [rad/s] step: 목표-현재 허용 오차 (각속도)
+        add_cmd_ang_speed: 0.05       # [rad/s] step 스무딩 tick당 증분 (각속도)
+        max_linear_accel: 0.6         # [m/s^2] 선가속도 상한
+        max_angular_accel: 1.5        # [rad/s^2] 각가속도 상한
+        deadzone_linear: 0.03         # [m/s] 이 값보다 작으면 0 처리
+        deadzone_angular: 0.03        # [rad/s] 이 값보다 작으면 0 처리
+        lpf_linear: 0.0               # 1차 LPF 계수(0.0 ~ 1.0) 0 = off
+        lpf_angular: 0.0              # 1차 LPF 계수 (0.0 ~ 1.0) 0 = off
+        limit_linear_abs: 0.7         # [m/s] 최종 선속도 절대 상한
+        limit_angular_abs: 1.5        # [rad/s] 최종 각속도 절대 상한
+
+    # ───────── Motor Profile ─────────
+    common_profile: &common_profile
+      control_rate: 50.0              # [Hz]
+      publish_tf: true
+
+      # - 조향 모터 속도 프로파일
+      steer_profile:
+        steer_max_velocity: 200.0           # [deg/s] 조향 최대 각속도
+        steer_max_accel: 600.0              # [deg/s^2] 조향 최대 각가속도
+        steer_position_tolerance: 2.0       # [deg] 조향 완료 판정 임계값
+      
+      # - 인휠 모터 속도 프로파일
+      inwheel_profile:
+        inwheel_max_accel: 800.0              # [rpm/s] 목표 rpm 변경 시 가속 제한
+        inwheel_max_decel: 1200.0             # [rpm/s] 목표 rpm 변경 시 감속 제한
+        inwheel_min_rpm: 5.0                  # 이 값 이하의 목표 rpm 0으로 처리. 떨림 방지
+      
+      # - 두 모터 싱크
+      #   조향 우선, 조향 오차에 비례하여 부드럽게 구동
+      steer_inwheel_sync:
+        wait_for_steer: true              # true: 조향 완료 후 구동 시작 / flase: 조향과 동시에 구동
+        drive_scale_by_steer_err: true    # true: 조향 오차에 비례하여 인휠 모터 출력 스케일링
+        steer_err_full_drive: 3.0         # [deg] 이 오차 이하면 구동 모터 100%
+        steer_err_zero_drive: 20.0        # [deg] 이 오차 이상이면 구동 안함
+    
+    # ───────── Motor Serial ─────────
+    # [todo] 통신 코드 확인하고 수정하기
+    # common_motor_serial: &common_motor_serial
+    #   topic_prefix: "/motor"
+    #   motor_id_fl: 1
+    #   motor_id_fr: 2
+    #   motor_id_rl: 3
+    #   motor_id_rr: 4
+
+    #   # - 제한 범위
+    #   inwheel_range: 1.0              # [m/s] -1.0 ~ 1.0
+    #   steer_range: 180.0              # [deg] -180.0 ~ 180.0
+
+    #   # - bridge 파라미터
+    #   bridge_params:
+    #     port_front: "/dev/ttyACM1"    # [todo] 포트 다시 확인
+    #     port_rear:  "/dev/ttyACM0"
+    #     baudrate: 115200              # [bps]
+    #     timeout_ms: 50                # [ms] 이 시간 내에 응답이 없으면 통신 실패 처리
+    #     stagger_offset_ratio: 0.3
+
+    # ───────── Camera Motor Serial ─────────
+    ##### [todo] 카메라 연결 후 다시 작성
+    common_camera_serial: &common_camera_serial
+      camera_serial:
+        port: "/dev/ttyUSB0"
+        baudrate: 115200
+        timeout_ms: 30
+        motor_ids:
+          camera_left: 0
+          camera_right: 1
+        min_angle_deg: -40.0            # [deg]
+        max_angle_deg: 180.0            # [deg]
+        publish_rate: 20.0              # [Hz]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# mobile_robot_node (메인 제어 노드)
+# ─────────────────────────────────────────────────────────────────────────────
+mobile_robot_node:
+  ros__parameters:
+    <<: [*common_frames, *common_geom, *common_ctrl, *common_profile]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# camera_node (카메라 모터 노드)
+# ─────────────────────────────────────────────────────────────────────────────
+camera_node:
+  ros__parameters:
+    <<: [*common_camera_serial]
