@@ -28,10 +28,10 @@ std::pair<double, double> Kinematics::GetWheelPos(int i) const
     const double ly = params_.wheel_y_offset;
     switch (i)
     {
-    case 0: return {lx, ly};
-    case 1: return {lx, -ly};
-    case 2: return {-lx, ly};
-    case 3: return {-lx, -ly};
+    case 0: return {lx, ly};       // [FL]
+    case 1: return {lx, -ly};        // [FR]
+    case 2: return {-lx, ly};      // [RL]
+    case 3: return {-lx, -ly};       // [RR]
     default: return {0.0, 0.0};
     }
 }

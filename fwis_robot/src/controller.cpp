@@ -36,6 +36,7 @@ void Controller::Reset()
     filt_vx_ = filt_vy_ = filt_wz_ = 0.0;
     cmd_vx_ = cmd_vy_ = cmd_wz_ = 0.0;
     steer_profile_vel_.fill(0.0);
+    steer_cmd_pos_.fill(0.0);
     inwheel_cmd_vel_.fill(0.0);
     kinematics_.Reset();
 }
@@ -106,15 +107,18 @@ std::vector<Command> Controller::Update(const std::vector<WheelState>& current_s
 
     // [5] IK
     std::vector<double> current_steer(4);
-    for (int i = 0; i < 4; i++) current_steer[i] = current_states[i].steering_ang;
+    for (int i = 0; i < 4; i++) current_steer[i] = steer_cmd_pos_[i];
+    // [todo] 모터값 받아오고 해당 코드로 수정 current_steer[i] = current_states[i].steering_ang;
 
     std::vector<WheelState> ik = kinematics_.InverseKinematics(cmd_vx_, cmd_vy_, cmd_wz_, current_steer);
 
     // [6-8] 프로파일 & 모터 동기화
     for (int i = 0; i < 4; i++) {
         const double target_steer = ik[i].steering_ang;
-        const double current_ang = current_states[i].steering_ang;
-        const double steer_err = std::fabs(target_steer - current_ang);
+        //const double current_ang = current_states[i].steering_ang;    // [todo] 실제 모터 값 받아오고 수정
+        const double current_ang = steer_cmd_pos_[i];
+        //const double steer_err = std::fabs(target_steer - current_ang);   // [todo] 실제 모터값 받아오고 수정
+        const double steer_err = std::fabs(target_steer - steer_cmd_pos_[i]);
 
         // [6] 조향 사다리꼴 프로파일
         double cmd_steer = SteerProfile(i, target_steer, current_ang, dt);
@@ -143,44 +147,51 @@ std::vector<Command> Controller::Update(const std::vector<WheelState>& current_s
 }
 
 // 조향 모터 trapezoidal 속도 프로파일
+// current_ang : 모터 피드백 각도 [deg]. 현재는 피드백 미연결 상태이므로 사용하지 않음.
+//               피드백 연결 시 steer_cmd_pos_ 동기화 로직 추가 예정.
 double Controller::SteerProfile(int i, double target_ang, double current_ang, double dt)
 {
-    const double max_vel = params_.steer_max_velocity;
+    const double max_vel   = params_.steer_max_velocity;
     const double max_accel = params_.steer_max_accel;
-    const double tol = params_.steer_position_tolerance;
+    const double tol       = params_.steer_position_tolerance;
 
-    double error = target_ang - current_ang;
-    double dist = std::fabs(error);
+    double& pos      = steer_cmd_pos_[i];
+    double& prof_vel = steer_profile_vel_[i];
+
+    double error = target_ang - pos;
+    double dist  = std::fabs(error);
 
     if (dist < tol) {
-        steer_profile_vel_[i] = 0.0;
-        return target_ang;
+        prof_vel = 0.0;
+        pos      = target_ang;
+        return pos;
     }
 
     double sign = Sign(error);
-    double& prof_vel = steer_profile_vel_[i];
 
     // 제동 거리 v^2 / (2a)
     double braking_dist = (prof_vel * prof_vel) / (2.0 * max_accel);
 
     double new_vel;
-    // 제동 거리와 남은 거리를 비교
     if (dist > braking_dist) {
         new_vel = std::min(prof_vel + max_accel * dt, max_vel);
     } else {
         new_vel = std::max(prof_vel - max_accel * dt, 0.0);
     }
 
-    new_vel = std::min(new_vel, std::sqrt(2.0 * max_accel * dist));
-    new_vel = std::min(new_vel, max_vel);
+    new_vel  = std::min(new_vel, std::sqrt(2.0 * max_accel * dist));
+    new_vel  = std::min(new_vel, max_vel);
     prof_vel = new_vel;
 
     double step = sign * new_vel * dt;
-    if (std::fabs(step) >= dist) {      // 오버슈트 방지
-        steer_profile_vel_[i] = 0.0;
-        return target_ang;
+    if (std::fabs(step) >= dist) {  // 오버슈트 방지
+        prof_vel = 0.0;
+        pos      = target_ang;
+        return pos;
     }
-    return current_ang + step;
+
+    pos += step;
+    return pos;
 }
 
 // 인휠 모터 가속/감속 프로파일

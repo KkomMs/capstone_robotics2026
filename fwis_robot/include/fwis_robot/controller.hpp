@@ -125,6 +125,10 @@ private:
     // 바퀴별 조향 프로파일 속도 상태 [deg/s]
     std::array<double, 4> steer_profile_vel_{};
 
+    // 바퀴별 조향 명령 누적 위치 [deg]
+    // 피드백 없이도 SteerProfile이 위치를 추적할 수 있도록 내부에서 관리
+    std::array<double, 4> steer_cmd_pos_{};
+
     // 바퀴별 인휠 명령 속도 상태 [m/s]
     std::array<double, 4> inwheel_cmd_vel_{};
 };
