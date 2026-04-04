@@ -75,7 +75,8 @@ class FourWSKeyboardController(Node):
             wheel_vy = vy + wz * rx
 
             target_speed = math.sqrt(wheel_vx**2 + wheel_vy**2)
-            target_angle = math.atan2(wheel_vy, wheel_vx)
+            target_angle = math.atan2(wheel_vy, wheel_vx)       # CW: - / CCW: + (origianl)
+            #target_angle = math.atan2(-wheel_vy, wheel_vx)     # CW: + / CCW: - (ours)
 
             # Optimization (Swerve Logic): Keep steering within -90 ~ +90 degrees
             current_angle = self.current_pos[i]
@@ -90,8 +91,19 @@ class FourWSKeyboardController(Node):
                     ang_diff += math.pi
                 target_speed *= -1.0
             
+            final_angle = current_angle + ang_diff
+
+            if final_angle > math.pi or final_angle < -math.pi:
+                if final_angle > math.pi:
+                    final_angle -= math.pi
+                else:
+                    final_angle += math.pi
+                target_speed *= -1.0
+            
+            final_angle = max(-math.pi, min(math.pi, final_angle))
+            
             self.rad_cmd[i] = target_speed / self.wheel_radius
-            self.pos_cmd[i] = current_angle + ang_diff
+            self.pos_cmd[i] = final_angle
 
     def update_motor_physics(self):
         # Low Pass Filter for smooth movement simulation
@@ -109,8 +121,13 @@ class FourWSKeyboardController(Node):
 
         # Logging (Throttled)
         self.get_logger().info(
-            f"CMD Input -> Vx: {self.cmd_vx:.2f} m/s | Vy: {self.cmd_vy:.2f} m/s | Wz: {self.cmd_wz:.2f} rad/s",
-            throttle_duration_sec=2.0
+            "\n"
+            "  [motor cmd] steer(deg) / inwheel(m/s)\n"
+            f"  FL(1): steer={(self.pos_cmd[0] * 180.0 / math.pi):6.2f}  inwheel={(self.rad_cmd[0] * self.wheel_radius):6.3f}\n"
+            f"  FR(2): steer={(self.pos_cmd[1] * 180.0 / math.pi):6.2f}  inwheel={(self.rad_cmd[1] * self.wheel_radius):6.3f}\n"
+            f"  RL(3): steer={(self.pos_cmd[2] * 180.0 / math.pi):6.2f}  inwheel={(self.rad_cmd[2] * self.wheel_radius):6.3f}\n"
+            f"  RR(4): steer={(self.pos_cmd[3] * 180.0 / math.pi):6.2f}  inwheel={(self.rad_cmd[3] * self.wheel_radius):6.3f}",
+            throttle_duration_sec=1.0
         )
 
 def main(args=None):
