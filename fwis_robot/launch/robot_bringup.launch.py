@@ -106,5 +106,5 @@ def _launch_setup(context, *args, **kwargs):
             #camera_node,
             robot_state_publisher,
             #ekf_robot_localization_node,
-            rviz,
+            #rviz,
             ]

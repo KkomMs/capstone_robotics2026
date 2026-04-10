@@ -38,7 +38,7 @@ T GetParam(const rclcpp::Node& node, const std::string& name)
 // --- 바퀴 idx ---
 // 조향: drive{1,2,3,4}_axis_joint / 인휠: motor{1,2,3,4}_axis_joint
 // [FL, FR, RL, RR]
-constexpr std::array<int, 4> MotorId = {1, 2, 3, 4};
+constexpr std::array<int, 4> MotorId = {2, 1, 4, 3};
 } // namespace
 
 class MobileRobotNode : public rclcpp::Node
@@ -236,8 +236,8 @@ private:
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 3000, "[SteerFront] /steer_fb/front data size < 2");
             return;
         }
-        current_states_[0].steering_ang = static_cast<double>(msg->data[0]);    // [FL]
-        current_states_[1].steering_ang = static_cast<double>(msg->data[1]);    // [FR]
+        current_states_[0].steering_ang = static_cast<double>(msg->data[1]);    // [FL]
+        current_states_[1].steering_ang = static_cast<double>(msg->data[0]);    // [FR]
     }
     void HandleSteerRear(const std_msgs::msg::Float32MultiArray::SharedPtr msg)
     {
@@ -245,8 +245,8 @@ private:
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 3000, "[SteerFront] /steer_fb/rear data size < 2");
             return;
         }
-        current_states_[2].steering_ang = static_cast<double>(msg->data[0]);    // [RL]
-        current_states_[3].steering_ang = static_cast<double>(msg->data[1]);    // [RR]
+        current_states_[2].steering_ang = static_cast<double>(msg->data[1]);    // [RL]
+        current_states_[3].steering_ang = static_cast<double>(msg->data[0]);    // [RR]
     }
     // ==========================================================
     //  [todo] 추후 실제 토픽으로 수정 Inwheel motor feddback 콜백 [?]
@@ -257,8 +257,8 @@ private:
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 3000, "[InwheelFront] /inwheel/front data size < 2");
             return;
         }
-        current_states_[0].wheel_vel = static_cast<double>(msg->data[0]);       // [FL]
-        current_states_[1].wheel_vel = static_cast<double>(msg->data[1]);       // [FL]
+        current_states_[0].wheel_vel = static_cast<double>(msg->data[1]);       // [FL]
+        current_states_[1].wheel_vel = static_cast<double>(msg->data[0]);       // [FL]
     }
     void HandleInwheelRear(const std_msgs::msg::Float32MultiArray::SharedPtr msg)
     {
@@ -266,8 +266,8 @@ private:
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 3000, "[InwheelFront] /inwheel/rear data size < 2");
             return;
         }
-        current_states_[2].wheel_vel = static_cast<double>(msg->data[0]);       // [RL]
-        current_states_[3].wheel_vel = static_cast<double>(msg->data[1]);       // [RR]
+        current_states_[2].wheel_vel = static_cast<double>(msg->data[1]);       // [RL]
+        current_states_[3].wheel_vel = static_cast<double>(msg->data[0]);       // [RR]
     }
 
     // ==========================================================
