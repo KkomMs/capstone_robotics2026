@@ -28,7 +28,7 @@ std::pair<double, double> Kinematics::GetWheelPos(int i) const
     const double ly = params_.wheel_y_offset;
     switch (i)
     {
-    case 0: return {lx, ly};       // [FL]
+    case 0: return {lx, ly};       // [FL]  
     case 1: return {lx, -ly};        // [FR]
     case 2: return {-lx, ly};      // [RL]
     case 3: return {-lx, -ly};       // [RR]
@@ -105,7 +105,7 @@ std::vector<WheelState> Kinematics::InverseKinematics(double linear_x, double li
         auto [rx, ry] = GetWheelPos(i);
 
         // V_wheel = V_robot + Omega x R_vector
-        double wheel_vx = linear_x - angular * ry;
+        double wheel_vx = linear_x - angular * ry;    //여기 angular부호 반대로 바꿈(좌회전 우회전 방향반대)
         double wheel_vy = linear_y + angular * rx;
 
         double target_speed = std::sqrt(wheel_vx * wheel_vx + wheel_vy * wheel_vy);
@@ -126,8 +126,21 @@ std::vector<WheelState> Kinematics::InverseKinematics(double linear_x, double li
             target_speed *= -1.0;   // 구동 바퀴 방향 뒤집기
         }
 
+        double final_angle_rad = current_angle_rad + ang_diff;
+
+        // 조향각을 -pi ~ pi 사이로 clamping
+        if (final_angle_rad > M_PI) {
+            final_angle_rad -= M_PI;
+            target_speed *= -1.0;
+        } else if (final_angle_rad < -M_PI) {
+            final_angle_rad += M_PI;
+            target_speed *= -1.0;
+        }
+        
+        final_angle_rad = std::max(-M_PI, std::min(M_PI, final_angle_rad));     // 최종 clamp
+
         commands[i].wheel_vel = target_speed;   // [m/s]
-        commands[i].steering_ang = (current_angle_rad + ang_diff) * 180.0 / M_PI;   // [deg]
+        commands[i].steering_ang = final_angle_rad * 180.0 / M_PI;   // [deg]
     }
 
     return commands;

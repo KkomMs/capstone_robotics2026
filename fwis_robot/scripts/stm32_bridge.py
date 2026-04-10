@@ -6,23 +6,31 @@ ROS2 토픽 → STM32 시리얼 명령 변환 브리지
 
 설계 원칙:
   1. 토픽 콜백은 내부 상태만 갱신 (시리얼 전송 없음)
-  2. 단일 heartbeat 스레드가 100ms 주기로 상태 전송
-  3. front/rear 전송을 50ms 오프셋으로 시간 분리
+  2. 단일 heartbeat 스레드가 50ms 주기로 상태 전송
+  3. front/rear 전송을 시간 분리
      → USB 호스트 컨트롤러의 bulk OUT 경합 완전 방지
   4. 모든 명령에 XOR 체크섬 부착 (SPDL 0.300*A3)
      → ORE로 바이트 손상 시 STM32가 해당 줄 폐기
-     → 100ms 뒤 다음 heartbeat에서 복구
+  5. heartbeat마다 FB 요청 → 응답 파싱 → 토픽 발행
 
-토픽:
+피드백 토픽:
+  /steer_fb/front   Float32MultiArray  [degL, degR]  조향 각도 (도)
+  /steer_fb/rear    Float32MultiArray  [degL, degR]
+  /encoder/front    Int32MultiArray    [encL, encR]  조향 엔코더 raw
+  /encoder/rear     Int32MultiArray    [encL, encR]
+  /mpin/front       Int32MultiArray    [mL, mR]      인휠 M핀
+  /mpin/rear        Int32MultiArray    [mL, mR]
+
+명령 토픽:
   /motor_N/inwheel  Float32  (-1.0 ~ 1.0)
-  /motor_N/steer    Float32  (-35.0 ~ 35.0 deg)
+  /motor_N/steer    Float32  (-180.0 ~ 180.0 deg)
   /motor/cmd        String   직접 명령 (STOP / ZERO / AUTO / MAN ...)
 ─────────────────────────────────────────────────────────────────
 """
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float32, String
+from std_msgs.msg import Float32, String, Int32MultiArray, Float32MultiArray
 
 import serial
 import threading
@@ -60,6 +68,8 @@ class BoardLink:
         self._connected = False
 
         self.RECONNECT_INTERVAL = 2.0
+        self._init_cmd = None
+        self._fb_callback = None   # 피드백 파싱 콜백
 
     def _try_open(self) -> bool:
         if not os.path.exists(self.port):
@@ -69,6 +79,10 @@ class BoardLink:
             self._ser = ser
             self._connected = True
             self.logger.info(f'[{self.label}] 연결됨 ({self.port})')
+            if self._init_cmd:
+                time.sleep(0.5)
+                ser.write((self._init_cmd + '\n').encode())
+                self.logger.info(f'[{self.label}] init: {self._init_cmd}')
             return True
         except serial.SerialException as e:
             self.logger.warn(f'[{self.label}] 열기 실패: {e}')
@@ -135,7 +149,10 @@ class BoardLink:
                         line, buf = buf.split(b'\n', 1)
                         text = line.decode('utf-8', errors='replace').strip()
                         if text:
-                            self.logger.info(f'[{self.label}] {text}')
+                            if text.startswith('FB ') and self._fb_callback:
+                                self._fb_callback(text)
+                            else:
+                                self.logger.info(f'[{self.label}] {text}')
             except serial.SerialException as e:
                 self.logger.warn(f'[{self.label}] 연결 끊김: {e}')
                 self._force_close()
@@ -173,8 +190,8 @@ class BoardState:
 # ──────────────────────────────────────────────────────────────
 # STM32BridgeNode
 # ──────────────────────────────────────────────────────────────
-HEARTBEAT_PERIOD = 0.050  # 100ms 주기
-STAGGER_OFFSET   = HEARTBEAT_PERIOD * 0.3 
+HEARTBEAT_PERIOD = 0.100  # 50ms 주기
+STAGGER_OFFSET   = HEARTBEAT_PERIOD * 0.34
 
 
 class STM32BridgeNode(Node):
@@ -182,8 +199,8 @@ class STM32BridgeNode(Node):
         super().__init__('stm32_bridge')
 
         # ── 파라미터 ──────────────────────────────────────────
-        self.declare_parameter('port_front', '/dev/ttyACM1')
-        self.declare_parameter('port_rear',  '/dev/ttyACM0')
+        self.declare_parameter('port_front', '/dev/ttyACM0')
+        self.declare_parameter('port_rear',  '/dev/ttyACM2')
         self.declare_parameter('baud',       115200)
 
         port_front = self.get_parameter('port_front').value
@@ -199,6 +216,27 @@ class STM32BridgeNode(Node):
         self.front_state = BoardState()
         self.rear_state  = BoardState()
 
+        # ── 피드백 퍼블리셔 ───────────────────────────────────
+        # 조향 각도 [degL, degR] (float, 도 단위)
+        self._pub_steer_fb_front = self.create_publisher(
+            Float32MultiArray, '/steer_fb/front', 10)
+        self._pub_steer_fb_rear = self.create_publisher(
+            Float32MultiArray, '/steer_fb/rear', 10)
+        # 조향 엔코더 raw [encL, encR]
+        self._pub_enc_front = self.create_publisher(
+            Int32MultiArray, '/encoder/front', 10)
+        self._pub_enc_rear = self.create_publisher(
+            Int32MultiArray, '/encoder/rear', 10)
+        # 인휠 M핀 [mL, mR] (1=회전중)
+        self._pub_mpin_front = self.create_publisher(
+            Int32MultiArray, '/mpin/front', 10)
+        self._pub_mpin_rear = self.create_publisher(
+            Int32MultiArray, '/mpin/rear', 10)
+
+        # ── 피드백 콜백 연결 ──────────────────────────────────
+        self.front._fb_callback = lambda t: self._parse_fb('front', t)
+        self.rear._fb_callback  = lambda t: self._parse_fb('rear', t)
+
         # ── RX 스레드 ─────────────────────────────────────────
         threading.Thread(
             target=self.front.run_reader, daemon=True, name='rx_FRONT').start()
@@ -207,6 +245,7 @@ class STM32BridgeNode(Node):
 
         # ── Heartbeat 스레드 (단일) ───────────────────────────
         self._hb_stop = threading.Event()
+        self._hb_count = 0
         threading.Thread(
             target=self._heartbeat_loop, daemon=True, name='heartbeat').start()
 
@@ -215,30 +254,30 @@ class STM32BridgeNode(Node):
 
         # 인휠 (좌우 물리 배선 반전 보정)
         self.create_subscription(Float32, '/motor_1/inwheel',
-            lambda msg: self._update_speed(self.front_state, 'R', msg), qos)
-        self.create_subscription(Float32, '/motor_2/inwheel',
             lambda msg: self._update_speed(self.front_state, 'L', msg), qos)
+        self.create_subscription(Float32, '/motor_2/inwheel',
+            lambda msg: self._update_speed(self.front_state, 'R', msg), qos)
         self.create_subscription(Float32, '/motor_3/inwheel',
-            lambda msg: self._update_speed(self.rear_state,  'R', msg), qos)
-        self.create_subscription(Float32, '/motor_4/inwheel',
             lambda msg: self._update_speed(self.rear_state,  'L', msg), qos)
+        self.create_subscription(Float32, '/motor_4/inwheel',
+            lambda msg: self._update_speed(self.rear_state,  'R', msg), qos)
 
         # 조향 (좌우 물리 배선 반전 보정)
         self.create_subscription(Float32, '/motor_1/steer',
-            lambda msg: self._update_steer(self.front_state, 'R', msg), qos)
-        self.create_subscription(Float32, '/motor_2/steer',
             lambda msg: self._update_steer(self.front_state, 'L', msg), qos)
+        self.create_subscription(Float32, '/motor_2/steer',
+            lambda msg: self._update_steer(self.front_state, 'R', msg), qos)
         self.create_subscription(Float32, '/motor_3/steer',
-            lambda msg: self._update_steer(self.rear_state,  'R', msg), qos)
-        self.create_subscription(Float32, '/motor_4/steer',
             lambda msg: self._update_steer(self.rear_state,  'L', msg), qos)
+        self.create_subscription(Float32, '/motor_4/steer',
+            lambda msg: self._update_steer(self.rear_state,  'R', msg), qos)
 
         # 직접 명령
         self.create_subscription(String, '/motor/cmd', self._on_cmd, qos)
 
         self.get_logger().info(
             f'stm32_bridge 시작 (heartbeat {HEARTBEAT_PERIOD*1000:.0f}ms, '
-            f'stagger {STAGGER_OFFSET*1000:.0f}ms, checksum ON)')
+            f'stagger {STAGGER_OFFSET*1000:.0f}ms, checksum ON, FB ON)')
 
     # ── 상태 갱신 콜백 (전송 없음) ────────────────────────────
     def _update_speed(self, state: BoardState, side: str, msg: Float32):
@@ -292,32 +331,62 @@ class STM32BridgeNode(Node):
 
         self.get_logger().info(f'[CMD] {cmd} → queued')
 
+    # ── 피드백 파싱 ───────────────────────────────────────────
+    def _parse_fb(self, board: str, text: str):
+        """'FB <degL_x100> <degR_x100> <encL> <encR> <mL> <mR>' 파싱"""
+        try:
+            parts = text.split()
+            if len(parts) < 7:
+                return
+            degL = int(parts[1]) / 100.0
+            degR = int(parts[2]) / 100.0
+            encL = int(parts[3])
+            encR = int(parts[4])
+            mL   = int(parts[5])
+            mR   = int(parts[6])
+
+            steer_msg = Float32MultiArray(data=[degL, degR])
+            enc_msg   = Int32MultiArray(data=[encL, encR])
+            mpin_msg  = Int32MultiArray(data=[mL, mR])
+
+            if board == 'front':
+                self._pub_steer_fb_front.publish(steer_msg)
+                self._pub_enc_front.publish(enc_msg)
+                self._pub_mpin_front.publish(mpin_msg)
+            else:
+                self._pub_steer_fb_rear.publish(steer_msg)
+                self._pub_enc_rear.publish(enc_msg)
+                self._pub_mpin_rear.publish(mpin_msg)
+        except (ValueError, IndexError):
+            pass
+
     # ── Heartbeat 전송 루프 ───────────────────────────────────
     def _heartbeat_loop(self):
         """
-        100ms 주기:
+        50ms 주기:
           t=0ms   : front 전송
-          t=50ms  : rear 전송
-          t=100ms : 다음 사이클
+          t=15ms  : rear 전송
+          t=50ms  : 다음 사이클
         """
         while not self._hb_stop.is_set():
             t0 = time.monotonic()
+            self._hb_count += 1
 
-            self._send_board(self.front, self.front_state)
+            self._send_board(self.front, self.front_state, self._hb_count % 4 == 0)
 
             elapsed = time.monotonic() - t0
             wait = STAGGER_OFFSET - elapsed
             if wait > 0:
                 time.sleep(wait)
 
-            self._send_board(self.rear, self.rear_state)
+            self._send_board(self.rear, self.rear_state, self._hb_count % 4 == 2)
 
             elapsed = time.monotonic() - t0
             wait = HEARTBEAT_PERIOD - elapsed
             if wait > 0:
                 time.sleep(wait)
 
-    def _send_board(self, board: BoardLink, state: BoardState):
+    def _send_board(self, board: BoardLink, state: BoardState, send_fb: bool):
         if not board.connected:
             return
 
@@ -336,18 +405,28 @@ class STM32BridgeNode(Node):
             board.write_line(cmd)
 
         if not active:
+            # 비활성이어도 피드백은 요청
+            if send_fb:
+                board.write_line('FB')
             board.flush()
             return
 
         # 인휠 속도
         board.write_line(f'SPDL {sL:.3f}')
+        time.sleep(0.002)
         board.write_line(f'SPDR {sR:.3f}')
+        time.sleep(0.002)
 
         # 조향
         if auto:
             board.write_line(f'STERL {tL:.2f}')
+            time.sleep(0.002)
             board.write_line(f'STERR {tR:.2f}')
+            time.sleep(0.002)
 
+        # 피드백 요청
+        if send_fb:
+            board.write_line('FB')
         board.flush()
 
     # ── 종료 ──────────────────────────────────────────────────
