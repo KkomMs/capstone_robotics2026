@@ -29,9 +29,9 @@ std::pair<double, double> Kinematics::GetWheelPos(int i) const
     switch (i)
     {
     case 0: return {lx, ly};       // [FL]  
-    case 1: return {lx, -ly};        // [FR]
+    case 1: return {lx, -ly};      // [FR]
     case 2: return {-lx, ly};      // [RL]
-    case 3: return {-lx, -ly};       // [RR]
+    case 3: return {-lx, -ly};     // [RR]
     default: return {0.0, 0.0};
     }
 }
@@ -105,7 +105,7 @@ std::vector<WheelState> Kinematics::InverseKinematics(double linear_x, double li
         auto [rx, ry] = GetWheelPos(i);
 
         // V_wheel = V_robot + Omega x R_vector
-        double wheel_vx = linear_x - angular * ry;    //여기 angular부호 반대로 바꿈(좌회전 우회전 방향반대)
+        double wheel_vx = linear_x - angular * ry;
         double wheel_vy = linear_y + angular * rx;
 
         double target_speed = std::sqrt(wheel_vx * wheel_vx + wheel_vy * wheel_vy);

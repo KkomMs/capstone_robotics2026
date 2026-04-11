@@ -38,7 +38,9 @@ T GetParam(const rclcpp::Node& node, const std::string& name)
 // --- 바퀴 idx ---
 // 조향: drive{1,2,3,4}_axis_joint / 인휠: motor{1,2,3,4}_axis_joint
 // [FL, FR, RL, RR]
-constexpr std::array<int, 4> MotorId = {2, 1, 4, 3};
+// 조향 좌우 반전, 구동 원래 순서대로
+constexpr std::array<int, 4> SteerMotorId = {2, 1, 4, 3};
+constexpr std::array<int, 4> InWheelMotorId = {1, 2, 3, 4};
 } // namespace
 
 class MobileRobotNode : public rclcpp::Node
@@ -64,14 +66,13 @@ public:
             "/wheel_cmd", qos);
         odom_pub_ = this->create_publisher<nav_msgs::msg::Odometry>(
             "/odom", qos);
-        joint_pub_ = this->create_publisher<sensor_msgs::msg::JointState>(
-            "/joint_states", qos);  // [todo] 기존에 작성한 토픽 -> 추후에 삭제, 수정 등 하기
+        // joint_pub_ = this->create_publisher<sensor_msgs::msg::JointState>(
+        //     "/joint_states", qos);  // [todo] 기존에 작성한 토픽 -> 추후에 삭제, 수정 등 하기
         for (int i = 0; i < 4; i++) {
-            const std::string prefix = "/motor_" + std::to_string(MotorId[i]);
             motor_inwheel_pubs_[i] = this->create_publisher<std_msgs::msg::Float32>(
-                prefix + "/inwheel", qos);
+                "/motor_" + std::to_string(InWheelMotorId[i]) + "/inwheel", qos);
             motor_steer_pubs_[i] = this->create_publisher<std_msgs::msg::Float32>(
-                prefix + "/steer", qos);
+                "/motor_" + std::to_string(SteerMotorId[i]) + "/steer", qos);
         }
         if (publish_tf_) {
             tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
@@ -296,7 +297,7 @@ private:
 
         // --- Publish ----------------------------------------
         PublishWheelCommands(motor_cmds);
-        PublishJointStates(motor_cmds, now);
+        //PublishJointStates(motor_cmds, now);
         PublishOdom(pose, now);
         if (publish_tf_) PublishTF(pose, now);
     }
