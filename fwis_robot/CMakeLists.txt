@@ -33,6 +33,7 @@ add_library(fwis_robot_core
   #src/camera.cpp
   src/controller.cpp
   src/kinematics.cpp
+  src/imu_driver.cpp
 )
 target_include_directories(fwis_robot_core PUBLIC
   $<BUILD_INTERFACE:${INCLUDE}>
@@ -88,12 +89,32 @@ ament_target_dependencies(mobile_robot_node
 # )
 
 # ====================================================
+# [Node] imu_node
+# ====================================================
+add_executable(imu_node
+  src/imu_node.cpp
+)
+target_include_directories(imu_node PUBLIC
+  $<BUILD_INTERFACE:${INCLUDE}>
+  $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(imu_node
+  fwis_robot_core
+)
+ament_target_dependencies(imu_node
+  rclcpp
+  sensor_msgs
+  tf2
+)
+
+# ====================================================
 # install - C++
 # ====================================================
 install(TARGETS
   fwis_robot_core
   mobile_robot_node
   #camera_node
+  imu_node
   RUNTIME DESTINATION lib/${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib

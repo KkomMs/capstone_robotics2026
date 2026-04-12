@@ -37,6 +37,11 @@ def _launch_setup(context, *args, **kwargs):
     # if not camera_params:
     #     raise RuntimeError(f"[robot_bringup.launch] '{params_path}'에 "
     #                        f"camera_node.ros__parameters가 없습니다.")
+
+    imu_params = (y.get('imu_node') or {}).get('ros__parameters') or {}
+    if not imu_params:
+        raise RuntimeError(f"[robot_bringup.launch] '{params_path}'에 "
+                           f"imu_node.ross__parameters가 없습니다.")
     # ─────────────────────────────────────────────────────────────────────────────
     # STM32 serial bridge
     # ─────────────────────────────────────────────────────────────────────────────
@@ -66,6 +71,16 @@ def _launch_setup(context, *args, **kwargs):
     #     output="screen",
     #     parameters=[camera_params],
     # )
+    # ─────────────────────────────────────────────────────────────────────────────
+    # IMU
+    # ─────────────────────────────────────────────────────────────────────────────
+    imu_node = Node(
+        package="fwis_robot",
+        executable="imu_node",
+        name="imu_node",
+        output='screen',
+        parameters=[imu_params],
+    )
     # ─────────────────────────────────────────────────────────────────────────────
     # Robot state Publisher Node (base_footprint -> 각 joints TF)
     # ─────────────────────────────────────────────────────────────────────────────
@@ -104,6 +119,7 @@ def _launch_setup(context, *args, **kwargs):
     return [stm32_bridge,
             mobile_node,
             #camera_node,
+            imu_node,
             robot_state_publisher,
             #ekf_robot_localization_node,
             rviz,

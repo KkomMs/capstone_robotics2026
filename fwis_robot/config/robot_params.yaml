@@ -99,6 +99,15 @@ defaults:
         min_angle_deg: -40.0            # [deg]
         max_angle_deg: 180.0            # [deg]
         publish_rate: 20.0              # [Hz]
+    
+    # ───────── IMU ─────────
+    common_imu: &common_imu
+      imu_port: "/dev/ttyIMU"
+      imu_baudrate: 115200
+      imu_frame_id: "imu_link"
+      sync_port: 1                      # 0: RS-232, 1: USB/UART
+      sync_period_ms: 20                # 50Hz
+      imu_publish_rate: 50.0            # [Hz]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # mobile_robot_node (메인 제어 노드)
@@ -113,3 +122,10 @@ mobile_robot_node:
 camera_node:
   ros__parameters:
     <<: [*common_camera_serial]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# imu_node (IMU 센서 노드)
+# ─────────────────────────────────────────────────────────────────────────────
+imu_node:
+  ros__parameters:
+    <<: [*common_imu]
