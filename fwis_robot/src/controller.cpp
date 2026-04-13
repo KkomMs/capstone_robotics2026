@@ -109,7 +109,16 @@ std::vector<Command> Controller::Update(const std::vector<WheelState>& current_s
     std::vector<double> current_steer(4);
     for (int i = 0; i < 4; i++) current_steer[i] = steer_cmd_pos_[i];       // 실제 모터값 대신 cmd 값 사용
 
-    std::vector<WheelState> ik = kinematics_.InverseKinematics(cmd_vx_, cmd_vy_, cmd_wz_, current_steer);
+    // 제자리 회전은 속도 높이기
+    double rf_vx = cmd_vx_;
+    double rf_vy = cmd_vy_;
+    double rf_wz = cmd_wz_;
+    if (std::fabs(cmd_vx_) < params_.deadzone_linear && std::fabs(cmd_vy_) < params_.deadzone_linear && std::fabs(cmd_wz_) >= params_.deadzone_angular) {
+        rf_wz = cmd_wz_ * 1.5;
+        rf_wz = Clamp(rf_wz, -params_.limit_angular_abs, params_.limit_angular_abs);
+    }
+
+    std::vector<WheelState> ik = kinematics_.InverseKinematics(rf_vx, rf_vy, rf_wz, current_steer);
 
     // [6-8] 프로파일 & 모터 동기화
     for (int i = 0; i < 4; i++) {
