@@ -19,7 +19,7 @@ def _launch_setup(context, *args, **kwargs):
     urdf_str    = urdf_path.perform(context)
     urdf_xml    = xacro.process_file(urdf_str).toxml()
     rviz_cfg    = PathJoinSubstitution([config, 'robot_rviz.rviz'])
-    #ekf_params_yaml = PathJoinSubstitution([config, 'ekf.yaml'])
+    ekf_params_yaml = PathJoinSubstitution([config, 'ekf.yaml'])
 
     # ─────────────────────────────────────────────────────────────────────────────
     # parameters
@@ -60,6 +60,7 @@ def _launch_setup(context, *args, **kwargs):
         name="mobile_robot_node",
         output="screen",
         parameters=[mobile_params],
+        remappings=[('odom', 'wheel_odom')],
     )
     # ─────────────────────────────────────────────────────────────────────────────
     # Cameras
@@ -97,14 +98,14 @@ def _launch_setup(context, *args, **kwargs):
     # ─────────────────────────────────────────────────────────────────────────────
     # localization
     # ─────────────────────────────────────────────────────────────────────────────
-    # ekf_robot_localization_node = Node(
-    #     package='robot_localization',
-    #     executable='ekf_node',
-    #     name='ekf_filter_node',
-    #     output='screen',
-    #     parameters=[ekf_params_yaml],
-    #     remappings=[('odometry/filtered', 'odom')]
-    # )
+    ekf_robot_localization_node = Node(
+        package='robot_localization',
+        executable='ekf_node',
+        name='ekf_filter_node',
+        output='screen',
+        parameters=[ekf_params_yaml],
+        remappings=[('odometry/filtered', 'odom')]
+    )
     # ─────────────────────────────────────────────────────────────────────────────
     # rviz
     # ─────────────────────────────────────────────────────────────────────────────
@@ -121,6 +122,6 @@ def _launch_setup(context, *args, **kwargs):
             #camera_node,
             imu_node,
             robot_state_publisher,
-            #ekf_robot_localization_node,
+            ekf_robot_localization_node,
             rviz,
             ]
