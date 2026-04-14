@@ -58,16 +58,14 @@ public:
         const auto qos = rclcpp::QoS(rclcpp::KeepLast(10));
 
         //  Subscribe: /cmd_vel, /steer, /inwheel
-        //  Publish: /wheel_cmd, /odom, /joint_states(시각화용), TF: odom -> base_footprint
-        //           /motor_N/inwheel, /motor_N/steer
+        //  Publish:   /odom, /joint_states(시각화용), TF: odom -> base_footprint
+        //             /motor_N/inwheel, /motor_N/steer
         // [todo] 카메라 관련 토픽 추가하기
         // --- Publisher -------------------------------------
-        wheel_cmd_pub_ = this->create_publisher<sensor_msgs::msg::JointState>(
-            "/wheel_cmd", qos);
         odom_pub_ = this->create_publisher<nav_msgs::msg::Odometry>(
             "/odom", qos);
-        // joint_pub_ = this->create_publisher<sensor_msgs::msg::JointState>(
-        //     "/joint_states", qos);  // [todo] 기존에 작성한 토픽 -> 추후에 삭제, 수정 등 하기
+        joint_pub_ = this->create_publisher<sensor_msgs::msg::JointState>(
+            "/joint_states", qos);
         for (int i = 0; i < 4; i++) {
             motor_inwheel_pubs_[i] = this->create_publisher<std_msgs::msg::Float32>(
                 "/motor_" + std::to_string(InWheelMotorId[i]) + "/inwheel", qos);
@@ -91,12 +89,12 @@ public:
             "/steer_fb/rear", qos,
             std::bind(&MobileRobotNode::HandleSteerRear, this, std::placeholders::_1));
         
-        // 구동 피드백 [?, ?]
+        // 구동 피드백 [m/s, m/s]
         inwheel_front_sub_ = this->create_subscription<std_msgs::msg::Float32MultiArray>(
-            "/inwheel/front", qos,
+            "/wheel_vel/front", qos,
             std::bind(&MobileRobotNode::HandleInwheelFront, this, std::placeholders::_1));
         inwheel_rear_sub_ = this->create_subscription<std_msgs::msg::Float32MultiArray>(
-            "/inwheel/rear", qos,
+            "/wheel_vel/rear", qos,
             std::bind(&MobileRobotNode::HandleInwheelRear, this, std::placeholders::_1));
 
         // --- Timer (50 Hz) -------------------------------------
@@ -203,33 +201,7 @@ private:
     }
 
     // ==========================================================
-    //  (모터로부터) joint_states_feedback 콜백
-    //  [todo] 실제 토픽 확인 후 코드 수정
-    // ==========================================================
-    void HandleJointStates(const sensor_msgs::msg::JointState::SharedPtr msg)
-    {
-        for (size_t k = 0; k < msg->name.size(); k++) {
-            // steer joint
-            auto st_idx = steer_name_to_idx_.find(msg->name[k]);
-            if (st_idx != steer_name_to_idx_.end()) {
-                int idx = st_idx->second;
-                if (k < msg->position.size()) {
-                    current_states_[idx].steering_ang = msg->position[k];   // [deg]
-                }
-                continue;
-            }
-            // inwheel joint
-            auto in_idx = inwheel_name_to_idx_.find(msg->name[k]);
-            if (in_idx != inwheel_name_to_idx_.end()) {
-                int idx = in_idx->second;
-                if (k < msg->velocity.size()) {
-                    current_states_[idx].wheel_vel = msg->velocity[k];      // [m/s]
-                }
-            }
-        }
-    }
-    // ==========================================================
-    //  Steer motor feddback 콜백 [deg]
+    //  Steer motor feedback 콜백 [deg]
     // ==========================================================
     void HandleSteerFront(const std_msgs::msg::Float32MultiArray::SharedPtr msg)
     {
@@ -250,25 +222,25 @@ private:
         current_states_[3].steering_ang = static_cast<double>(msg->data[0]);    // [RR]
     }
     // ==========================================================
-    //  [todo] 추후 실제 토픽으로 수정 Inwheel motor feddback 콜백 [?]
+    //  Inwheel motor feedback 콜백 [m/s]
     // ==========================================================
     void HandleInwheelFront(const std_msgs::msg::Float32MultiArray::SharedPtr msg)
     {
         if (msg->data.size() < 2) {
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 3000, "[InwheelFront] /inwheel/front data size < 2");
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 3000, "[InwheelFront] /wheel_vel/front data size < 2");
             return;
         }
-        current_states_[0].wheel_vel = static_cast<double>(msg->data[1]);       // [FL]
-        current_states_[1].wheel_vel = static_cast<double>(msg->data[0]);       // [FL]
+        current_states_[0].wheel_vel = static_cast<double>(msg->data[0]);       // [FL]
+        current_states_[1].wheel_vel = static_cast<double>(msg->data[1]);       // [FR]
     }
     void HandleInwheelRear(const std_msgs::msg::Float32MultiArray::SharedPtr msg)
     {
         if (msg->data.size() < 2) {
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 3000, "[InwheelFront] /inwheel/rear data size < 2");
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 3000, "[InwheelFront] /wheel_vel/rear data size < 2");
             return;
         }
-        current_states_[2].wheel_vel = static_cast<double>(msg->data[1]);       // [RL]
-        current_states_[3].wheel_vel = static_cast<double>(msg->data[0]);       // [RR]
+        current_states_[2].wheel_vel = static_cast<double>(msg->data[0]);       // [RL]
+        current_states_[3].wheel_vel = static_cast<double>(msg->data[1]);       // [RR]
     }
 
     // ==========================================================
@@ -285,43 +257,22 @@ private:
         const auto motor_cmds = controller_.Update(current_states_, dt);
 
         // --- FK 계산 ----------------------------------------
-        ///// [임시] 조향 = 피드백 값, 구동 = 명령값
-        std::vector<WheelState> fk_states(4);
-        for (int i = 0; i < 4; i++) {
-            fk_states[i].steering_ang = current_states_[i].steering_ang;
-            fk_states[i].wheel_vel = motor_cmds[i].wheel_vel;
-        }
-        kinematics_.ForwardKinematics(fk_states, dt);
-        // kinematics_.ForwardKinematics(current_states_, dt);
+        // 조향 = 피드백, 선속도 = cmd
+        // std::vector<WheelState> fk_states(4);
+        // for (int i = 0; i < 4; i++) {
+        //     fk_states[i].steering_ang = current_states_[i].steering_ang;
+        //     fk_states[i].wheel_vel = motor_cmds[i].wheel_vel;
+        // }
+        // kinematics_.ForwardKinematics(fk_states, dt);
+        // 실제 피드백으로 FK 계산
+        kinematics_.ForwardKinematics(current_states_, dt);
         const auto& pose = kinematics_.GetPose();
 
         // --- Publish ----------------------------------------
         PublishWheelCommands(motor_cmds);
-        //PublishJointStates(motor_cmds, now);
+        PublishJointStates(motor_cmds, now);
         PublishOdom(pose, now);
         if (publish_tf_) PublishTF(pose, now);
-    }
-
-    // ==========================================================
-    //  // [todo] 기존 작성 코드. 추후 수정. 모터 명령 publish
-    // ==========================================================
-    void TempPublishWheelCommands(const std::vector<Command>& cmds, const rclcpp::Time& stamp)
-    {
-        sensor_msgs::msg::JointState msg;
-        msg.header.stamp = stamp;
-        msg.name.resize(8);
-        msg.position.resize(8, 0.0);
-        msg.velocity.resize(8, 0.0);
-        msg.effort.resize(8, 0.0);
-
-        for (int i = 0; i < 4; i++) {
-            msg.name[i] = steer_joint_names_[i];
-            msg.position[i] = cmds[i].steering_ang;     // [deg]
-
-            msg.name[i + 4] = inwheel_joint_names_[i];
-            msg.velocity[i + 4] = cmds[i].wheel_vel;    // [m/s]
-        }
-        wheel_cmd_pub_->publish(msg);
     }
 
     // ==========================================================
@@ -449,10 +400,9 @@ private:
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr          cmd_sub_;
     rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr   steer_front_sub_;
     rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr   steer_rear_sub_;
-    rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr   inwheel_front_sub_;     // [todo] 추후 실제 토픽명으로 수정
-    rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr   inwheel_rear_sub_;      // [todo] 추후 실제 토픽명으로 수정
-    rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr          wheel_cmd_pub_;
-    rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr          joint_pub_;  // [todo] 추후 수정
+    rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr   inwheel_front_sub_;
+    rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr   inwheel_rear_sub_;
+    rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr          joint_pub_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr               odom_pub_;
     std::shared_ptr<tf2_ros::TransformBroadcaster>                      tf_broadcaster_;
     rclcpp::TimerBase::SharedPtr                                        timer_;
