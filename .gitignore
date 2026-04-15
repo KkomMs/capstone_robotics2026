@@ -38,3 +38,6 @@
 # Python
 __pycache__
 *.pyc
+
+# CSV
+*.csv
