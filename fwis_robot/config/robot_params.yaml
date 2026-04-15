@@ -65,27 +65,6 @@ defaults:
         steer_err_full_drive: 3.0         # [deg] 이 오차 이하면 구동 모터 100%
         steer_err_zero_drive: 20.0        # [deg] 이 오차 이상이면 구동 안함
     
-    # ───────── Motor Serial ─────────
-    # [todo] 통신 코드 확인하고 수정하기
-    # common_motor_serial: &common_motor_serial
-    #   topic_prefix: "/motor"
-    #   motor_id_fl: 1
-    #   motor_id_fr: 2
-    #   motor_id_rl: 3
-    #   motor_id_rr: 4
-
-    #   # - 제한 범위
-    #   inwheel_range: 1.0              # [m/s] -1.0 ~ 1.0
-    #   steer_range: 180.0              # [deg] -180.0 ~ 180.0
-
-    #   # - bridge 파라미터
-    #   bridge_params:
-    #     port_front: "/dev/ttyACM1"    # [todo] 포트 다시 확인
-    #     port_rear:  "/dev/ttyACM0"
-    #     baudrate: 115200              # [bps]
-    #     timeout_ms: 50                # [ms] 이 시간 내에 응답이 없으면 통신 실패 처리
-    #     stagger_offset_ratio: 0.3
-
     # ───────── Camera Motor Serial ─────────
     ##### [todo] 카메라 연결 후 다시 작성
     common_camera_serial: &common_camera_serial
