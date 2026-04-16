@@ -13,6 +13,7 @@
 #include "pluginlib/class_loader.hpp"
 #include "pluginlib/class_list_macros.hpp"
 #include "std_msgs/msg/float64_multi_array.hpp"
+#include "std_msgs/msg/float32.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
@@ -71,7 +72,7 @@ public:
    * @brief 플러그인 초기화: 파라미터 로드 + NLopt 옵티마이저 설정
    *
    * NLopt 객체를 configure() 시점에 1회만 생성하고 이후 제어 주기에서
-   * 재사용함으로써 매 주기의 할당 오버헤드를 제거한다.
+   * 재사용함으로써 매 주기의 할당 오버헤드 제거.
    */
   void configure(
     const rclcpp_lifecycle::LifecycleNode::WeakPtr & parent,
@@ -85,8 +86,7 @@ public:
   void setSpeedLimit(const double & speed_limit, const bool & percentage) override;
 
   /**
-   * @brief 현재 포즈에서 속도 명령 계산 (NLopt MPC 최적화 수행)
-   * @return TwistStamped (linear.x=V_ref, angular.z=등가 yaw rate)
+   * @brief 현재 포즈에서 속도 명령 계산
    */
   geometry_msgs::msg::TwistStamped computeVelocityCommands(
     const geometry_msgs::msg::PoseStamped & pose,
@@ -207,7 +207,7 @@ protected:
 
   static double normalizeAngle(double angle);
 
-  // ── ROS2 인터페이스 멤버 ────────────────────────────────────────────────────
+  // ── ROS2 인터페이스 ────────────────────────────────────────────────────
 
   rclcpp_lifecycle::LifecycleNode::WeakPtr node_;
   std::shared_ptr<tf2_ros::Buffer> tf_;
@@ -217,10 +217,8 @@ protected:
   rclcpp::Clock::SharedPtr clock_;
 
   std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Path>>      global_pub_;
-  std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<
-    std_msgs::msg::Float64MultiArray>> pub_steer_;
-  std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<
-    std_msgs::msg::Float64MultiArray>> pub_drive_;
+  std::array<rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::Float32>::SharedPtr, 4>    motor_steer_pubs_;
+  std::array<rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::Float32>::SharedPtr, 4>    motor_inwheel_pubs_;
 
   // ── 차량 파라미터 ────────────────────────────────────────────────────────────
 
@@ -244,6 +242,9 @@ protected:
   bool is_reversing_;         ///< 후진 여부
   bool is_point_turning_;     ///< 제자리 회전 여부
   double current_v_ref_;      ///< 현재 적용할 동적 속도 [m/s]
+
+  // ── 마지막 조향각 저장 ───────────────────────────────────────────────────────
+  WheelAngles last_steer_angles_;     ///< 마지막 조향각 (정지 명령 시 유지용)
   
   // ── 비용 함수 가중치 ─────────────────────────────────────────────────────────
 

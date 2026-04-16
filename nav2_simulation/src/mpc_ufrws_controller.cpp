@@ -29,6 +29,10 @@ double MpcUFRWSController::normalizeAngle(double angle)
   return angle;
 }
 
+// ── 바퀴 index ───────────────────────────────────────────────────────
+constexpr std::array<int, 4> SteerMotorId = {2, 1, 4, 3};
+constexpr std::array<int, 4> InWheelMotorId = {1, 2, 3, 4};
+
 // ── NLopt 목적 함수 콜백 ───────────────────────────────────────────────────────
 double MpcUFRWSController::nloptObjectiveCb(
   const std::vector<double> & u,
@@ -196,13 +200,15 @@ void MpcUFRWSController::configure(
   nlopt_cb_data_.controller   = this;
   nlopt_cb_data_.eps          = opt_grad_eps_;
 
-  // ── 퍼블리셔 생성 ────────────────────────────────────────────────────────────
-  pub_steer_ = node->create_publisher<std_msgs::msg::Float64MultiArray>(
-    "/forward_position_controller/commands", rclcpp::SystemDefaultsQoS());
-  pub_drive_ = node->create_publisher<std_msgs::msg::Float64MultiArray>(
-    "/forward_velocity_controller/commands", rclcpp::SystemDefaultsQoS());
+  // ── 퍼블리셔 ────────────────────────────────────────────────────────────
   global_pub_ = node->create_publisher<nav_msgs::msg::Path>(
     "received_global_plan", 1);
+  for (int i = 0; i < 4; i++) {
+    motor_steer_pubs_[i] = node->create_publisher<std_msgs::msg::Float32>(
+      "/motor_" + std::to_string(SteerMotorId[i]) + "/steer", rclcpp::SystemDefaultsQoS());
+    motor_inwheel_pubs_[i] = node->create_publisher<std_msgs::msg::Float32>(
+      "/motor_" + std::to_string(InWheelMotorId[i]) + "/inwheel", rclcpp::SystemDefaultsQoS());
+  }
 
   RCLCPP_INFO(logger_,
     "[MpcUFRWSController] Configured. "
@@ -222,24 +228,30 @@ void MpcUFRWSController::cleanup()
   RCLCPP_INFO(logger_, "Cleaning up MpcUFRWSController: %s", plugin_name_.c_str());
   nlopt_opt_.reset();
   global_pub_.reset();
-  pub_steer_.reset();
-  pub_drive_.reset();
+  for (int i = 0; i < 4; i++) {
+    motor_steer_pubs_[i].reset();
+    motor_inwheel_pubs_[i].reset();
+  }
 }
 
 void MpcUFRWSController::activate()
 {
   RCLCPP_INFO(logger_, "Activating MpcUFRWSController: %s", plugin_name_.c_str());
   global_pub_->on_activate();
-  pub_steer_->on_activate();
-  pub_drive_->on_activate();
+  for (int i = 0; i < 4; i++) {
+    motor_steer_pubs_[i]->on_activate();
+    motor_inwheel_pubs_[i]->on_activate();
+  }
 }
 
 void MpcUFRWSController::deactivate()
 {
   RCLCPP_INFO(logger_, "Deactivating MpcUFRWSController: %s", plugin_name_.c_str());
   global_pub_->on_deactivate();
-  pub_steer_->on_deactivate();
-  pub_drive_->on_deactivate();
+  for (int i = 0; i < 4; i++) {
+    motor_steer_pubs_[i]->on_deactivate();
+    motor_inwheel_pubs_[i]->on_deactivate();
+  }
 }
 
 void MpcUFRWSController::setSpeedLimit(
@@ -354,7 +366,6 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   publishWheelCommands(steer, vel);
 
   // ── 8. Nav2 표준 TwistStamped 반환 ───────────────────────────────────────
-  // 등가 yaw rate: ω = V·cos((δf+δr)/2) / L · (δf - δr)
   const double avg_steer = (delta_f + delta_r) / 2.0;
   const double yaw_rate  = V_ref_ * std::cos(avg_steer) / L_ * (delta_f - delta_r);
 
@@ -367,7 +378,7 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   return cmd_vel;
 }
 
-// ── UFRWS 기구학 모델 (논문 Eq.6) ────────────────────────────────────────────
+// ── UFRWS 기구학 모델 ────────────────────────────────────────────
 
 VehicleState MpcUFRWSController::ufrwsModel(
   const VehicleState & state,
@@ -420,7 +431,7 @@ double MpcUFRWSController::mpcCost(
     // 제어량 크기 비용 (조향각이 불필요하게 커지는 것 억제)
     cost += R_u_ * (delta_f * delta_f + delta_r * delta_r);
 
-    // 제어 증분 비용 (급격한 조향 변화 억제 → 부드러운 주행)
+    // 제어 증분 비용 (급격한 조향 변화 억제)
     cost += R_delta_ * (
       (delta_f - prev_df) * (delta_f - prev_df) +
       (delta_r - prev_dr) * (delta_r - prev_dr));
@@ -432,7 +443,7 @@ double MpcUFRWSController::mpcCost(
   return cost;
 }
 
-// ── NLopt 최적화 (핵심: 실시간 최적화 루프) ──────────────────────────────────
+// ── NLopt 최적화 ──────────────────────────────────
 std::vector<double> MpcUFRWSController::optimizeMPC(
   const VehicleState & current_state,
   const std::vector<VehicleState> & target_seq)
@@ -752,29 +763,48 @@ void MpcUFRWSController::computePointTurnCommands(
 void MpcUFRWSController::publishStopCommands()
 {
   // 속도 0
-  std_msgs::msg::Float64MultiArray drive_msg;
-  drive_msg.data = {0.0, 0.0, 0.0, 0.0};
-  pub_drive_->publish(drive_msg);
+  std_msgs::msg::Float32 drive_msg;
+  drive_msg.data = 0.0f;
 
-  // 조향각 0
-  std_msgs::msg::Float64MultiArray steer_msg;
-  steer_msg.data = {0.0, 0.0, 0.0, 0.0};
-  pub_steer_->publish(steer_msg);
+  // 마지막 조향각 유지
+  const std::array<double, 4> last_steer_cmds = {
+    last_steer_angles_.fl,
+    last_steer_angles_.fr,
+    last_steer_angles_.rl,
+    last_steer_angles_.rr
+  };
+
+  std_msgs::msg::Float32 steer_msg;
+
+  for (int i = 0; i < 4; i++) {
+    steer_msg.data = static_cast<float>(last_steer_cmds[i]);
+    motor_inwheel_pubs_[i]->publish(drive_msg);
+    motor_steer_pubs_[i]->publish(steer_msg);
+  }
 }
 
 // ── 바퀴 명령 발행 ─────────────────────────────────────────────────────────────
 
 void MpcUFRWSController::publishWheelCommands(const WheelAngles & steer, const WheelVelocities & vel)
-{
-  // 조향각 위치 명령: [FL, FR, RL, RR]
-  std_msgs::msg::Float64MultiArray steer_msg;
-  steer_msg.data = {steer.fl, steer.fr, steer.rl, steer.rr};
-  pub_steer_->publish(steer_msg);
+{ 
+  // 조향각 저장
+  last_steer_angles_ = steer;
 
-  // 구동 속도 명령: [FL, FR, RL, RR]
-  std_msgs::msg::Float64MultiArray drive_msg;
-  drive_msg.data = {vel.fl, vel.fr, vel.rl, vel.rr};
-  pub_drive_->publish(drive_msg);
+  const std::array<double, 4> steer_cmds = {steer.fl, steer.fr, steer.rl, steer.rr};
+  const std::array<double, 4> vel_cmds = {vel.fl, vel.fr, vel.rl, vel.rr};
+
+  std_msgs::msg::Float32 steer_msg;
+  std_msgs::msg::Float32 drive_msg;
+
+  for (int i = 0; i < 4; i++) {
+    // 조향 각도 명령 발행
+    steer_msg.data = static_cast<float>(steer_cmds[i]);
+    motor_steer_pubs_[i]->publish(steer_msg);
+
+    // 구동 속도 명령
+    drive_msg.data = static_cast<float>(vel_cmds[i]);
+    motor_inwheel_pubs_[i]->publish(drive_msg);
+  }
 }
 
 // ── TF 좌표 변환 ──────────────────────────────────────────────────────────────
