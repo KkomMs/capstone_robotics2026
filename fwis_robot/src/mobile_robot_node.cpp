@@ -75,6 +75,10 @@ public:
         if (publish_tf_) {
             tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
         }
+        for (int i = 0; i < 4; i++) {
+            filtered_vel_pubs_[i] = this->create_publisher<std_msgs::msg::Float32>(
+                "/filtered_vel_" + std::to_string(InWheelMotorId[i]), qos);
+        }
 
         // --- Subscriber -------------------------------------
         cmd_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
@@ -289,6 +293,17 @@ private:
         PublishJointStates(motor_cmds, now);
         PublishOdom(pose, now);
         if (publish_tf_) PublishTF(pose, now);
+        PublishFilteredVel();
+    }
+
+    // 임시: 필터링 값 publish
+    void PublishFilteredVel()
+    {
+        for (int i = 0; i < 4; i++) {
+        std_msgs::msg::Float32 msg;
+        msg.data = static_cast<float>(filtered_vel_[i]);
+        filtered_vel_pubs_[i]->publish(msg);
+    }
     }
 
     // ==========================================================
@@ -424,6 +439,7 @@ private:
     rclcpp::TimerBase::SharedPtr                                        timer_;
     std::array<rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr, 4>     motor_inwheel_pubs_;
     std::array<rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr, 4>     motor_steer_pubs_;
+    std::array<rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr, 4>     filtered_vel_pubs_;
 
     // 파라미터
     std::string base_frame_id_;

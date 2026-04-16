@@ -48,7 +48,7 @@ ekf_filter_node:
         # rolldot, pitchdot, yawdot     roll, pitch, yaw 방향 각속도
         #   xddot,  yddot,  zddot ]     x, y, z 방향 선가속도
         odom0_config: [true,  true,  false,
-                       false, false, true,
+                       false, false, false,
                        true, true, false,
                        false, false, false,
                        false, false, false]
