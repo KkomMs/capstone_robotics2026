@@ -756,9 +756,15 @@ void MpcUFRWSController::publishStopCommands()
   drive_msg.data = {0.0, 0.0, 0.0, 0.0};
   pub_drive_->publish(drive_msg);
 
-  // 조향각 0
+  // 마지막 조향각 유지
   std_msgs::msg::Float64MultiArray steer_msg;
-  steer_msg.data = {0.0, 0.0, 0.0, 0.0};
+  steer_msg.data = {
+    last_steer_angles_.fl,
+    last_steer_angles_.fr,
+    last_steer_angles_.rl,
+    last_steer_angles_.rr
+  };
+  
   pub_steer_->publish(steer_msg);
 }
 
@@ -766,6 +772,9 @@ void MpcUFRWSController::publishStopCommands()
 
 void MpcUFRWSController::publishWheelCommands(const WheelAngles & steer, const WheelVelocities & vel)
 {
+  // 조향각 저장
+  last_steer_angles_ = steer;
+
   // 조향각 위치 명령: [FL, FR, RL, RR]
   std_msgs::msg::Float64MultiArray steer_msg;
   steer_msg.data = {steer.fl, steer.fr, steer.rl, steer.rr};

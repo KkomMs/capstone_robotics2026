@@ -13,6 +13,7 @@
 #include "pluginlib/class_loader.hpp"
 #include "pluginlib/class_list_macros.hpp"
 #include "std_msgs/msg/float64_multi_array.hpp"
+#include "std_msgs/msg/float32.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
@@ -244,6 +245,9 @@ protected:
   bool is_reversing_;         ///< 후진 여부
   bool is_point_turning_;     ///< 제자리 회전 여부
   double current_v_ref_;      ///< 현재 적용할 동적 속도 [m/s]
+
+  // ── 마지막 조향각 저장 ───────────────────────────────────────────────────────
+  WheelAngles last_steer_angles_;     ///< 마지막 조향각 (정지 명령 시 유지용)
   
   // ── 비용 함수 가중치 ─────────────────────────────────────────────────────────
 
