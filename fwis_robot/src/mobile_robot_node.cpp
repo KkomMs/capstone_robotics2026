@@ -278,14 +278,15 @@ private:
 
         // --- FK 계산 ----------------------------------------
         // 조향 = 피드백, 선속도 = cmd
-        // std::vector<WheelState> fk_states(4);
-        // for (int i = 0; i < 4; i++) {
-        //     fk_states[i].steering_ang = current_states_[i].steering_ang;
-        //     fk_states[i].wheel_vel = motor_cmds[i].wheel_vel;
-        // }
-        // kinematics_.ForwardKinematics(fk_states, dt);
+        std::vector<WheelState> fk_states(4);
+        for (int i = 0; i < 4; i++) {
+            // fk_states[i].steering_ang = current_states_[i].steering_ang;
+            fk_states[i].steering_ang = motor_cmds[i].steering_ang;
+            fk_states[i].wheel_vel = motor_cmds[i].wheel_vel;
+        }
+        kinematics_.ForwardKinematics(fk_states, dt);
         // 실제 피드백으로 FK 계산
-        kinematics_.ForwardKinematics(current_states_, dt);
+        // kinematics_.ForwardKinematics(current_states_, dt);
         const auto& pose = kinematics_.GetPose();
 
         // --- Publish ----------------------------------------
