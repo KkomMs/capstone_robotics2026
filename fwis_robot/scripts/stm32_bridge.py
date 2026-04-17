@@ -16,9 +16,17 @@ stm32_bridge.py  (피드포워드 + PID 속도 제어 버전)
   /motor/cmd        String   STOP / ZERO / AUTO / MAN ...
 
 속도 제어 구조:
+ use_pid=True:
   duty = feedforward + PID보정
   feedforward = 목표속도 / MAX_WHEEL_VEL_MS
   PID보정     = KP*err + KI*int(err) + KD*filtered_derr/dt
+ use_pid=False:
+   duty = 목표속도 / MAX_WHEEL_VEL_MS (feedforward만, PID 없음)
+
+Duty 보정:
+    선형 근사하여 보정 계수 계산
+    - 실제속도 = 3.5258 * duty_sent - 0.2537
+    -> 역함수: corrected_duty = target_vel * 0.2836 + 0.0720
 
 수정 사항:
   1) 정지 바이패스: target≈0 → duty=0 즉시 + 버퍼 클리어
@@ -26,6 +34,7 @@ stm32_bridge.py  (피드포워드 + PID 속도 제어 버전)
   3) 블랭킹 타이머: STM32 방향전환 상태머신(400ms) 동안
      PID를 멈추고 피드포워드만 출력 → 적분/미분 오염 방지
   4) 미분 로우패스 필터: 스텝 입력 시 derivative 스파이크 억제
+  5) use_pid: PID 제어 사용 유무 선택
 ─────────────────────────────────────────────────────────────────
 """
 
@@ -47,6 +56,12 @@ WHEEL_DIAMETER_M  = 0.1397
 WHEEL_CIRCUMF_M   = 3.14159265 * WHEEL_DIAMETER_M
 
 MAX_WHEEL_VEL_MS = 1.4
+
+# ──────────────────────────────────────────────────────────────
+# Duty 보정 상수
+# ──────────────────────────────────────────────────────────────
+DUTY_SCALE = 0.2836
+DUTY_OFFSET = 0.0720
 
 
 # ──────────────────────────────────────────────────────────────
@@ -133,6 +148,7 @@ class WheelPID:
         self._prev_sign = new_sign
 
     def update(self, actual_vel: float, dt: float) -> float:
+        # pid 사용
         if dt <= 0:
             return self.duty
 
@@ -144,8 +160,9 @@ class WheelPID:
             self.filtered_deriv = 0.0
             return 0.0
 
-        # 피드포워드
-        feedforward = self.target / self.max_vel
+        # 보정 피드포워드 (duty = sign * |target| * SCALE + OFFSET)
+        sign = 1.0 if self.target >= 0.0 else -1.0
+        feedforward = sign * (abs(self.target) * DUTY_SCALE + DUTY_OFFSET)
 
         # 블랭킹 중이면 피드포워드만 출력, PID 안 돌림
         # STM32가 방향 전환하는 동안 피드백이 엉뚱하므로
@@ -180,6 +197,23 @@ class WheelPID:
                    + self.kd * self.filtered_deriv)
 
         self.duty = max(-1.0, min(1.0, feedforward + pid_out))
+
+        return self.duty
+
+    def update_no_pid(self, dt: float) -> float:
+        # pid 없이 피드포워드만 이용해서 duty 계산
+        if dt <= 0:
+            return self.duty
+
+        # 정지 바이패스
+        if abs(self.target) < 1e-4:
+            self.duty = 0.0
+            return 0.0
+
+        # 보정 피드포워드 (duty = sign * |target| * SCALE + OFFSET)
+        sign = 1.0 if self.target >= 0.0 else -1.0
+        feedforward = sign * (abs(self.target) * DUTY_SCALE + DUTY_OFFSET)
+        self.duty = max(-1.0, min(1.0, feedforward))
 
         return self.duty
 
@@ -337,10 +371,12 @@ class STM32BridgeNode(Node):
         self.declare_parameter('port_front', '/dev/ttyFRONT')
         self.declare_parameter('port_rear',  '/dev/ttyREAR')
         self.declare_parameter('baud',       115200)
+        self.declare_parameter('use_pid',    True)
 
         port_front = self.get_parameter('port_front').value
         port_rear  = self.get_parameter('port_rear').value
         baud       = self.get_parameter('baud').value
+        self.use_pid = self.get_parameter('use_pid').value
 
         self.get_logger().info(
             f'전륜: {port_front} | 후륜: {port_rear} | baud: {baud}')
@@ -407,12 +443,19 @@ class STM32BridgeNode(Node):
 
         self.create_subscription(String, '/motor/cmd', self._on_cmd, qos)
 
-        self.get_logger().info(
-            f'stm32_bridge 시작 (피드포워드+PID | '
-            f'KP={KP} KI={KI} KD={KD} | '
-            f'INT_LIM={INTEGRAL_LIMIT} DERIV_α={DERIV_FILTER_ALPHA} | '
-            f'BLANKING={DIR_CHANGE_BLANKING_SEC}s | '
-            f'MAX_VEL={MAX_WHEEL_VEL_MS}m/s)')
+        # pid 사용 유무에 따라 로그 메시지 분기
+        if self.use_pid:
+            self.get_logger().info(
+                f'stm32_bridge 시작 (피드포워드+PID | '
+                f'KP={KP} KI={KI} KD={KD} | '
+                f'INT_LIM={INTEGRAL_LIMIT} DERIV_α={DERIV_FILTER_ALPHA} | '
+                f'BLANKING={DIR_CHANGE_BLANKING_SEC}s | '
+                f'MAX_VEL={MAX_WHEEL_VEL_MS}m/s)')
+        else:
+            self.get_logger().info(
+                f'stm32_bridge 시작 (피드포워드 전용, PID 비활성 | '
+                f'DUTY_SCALE={DUTY_SCALE} DUTY_OFFSET={DUTY_OFFSET} | '
+                f'MAX_VEL={MAX_WHEEL_VEL_MS}m/s)')
 
     # ── 이동평균 버퍼 클리어 ──────────────────────────────────
     def _clear_vel_buf(self, board: str, side: str = None):
@@ -614,8 +657,14 @@ class STM32BridgeNode(Node):
             auto = state.steer_auto
 
             if active:
-                duty_L = state.pid_L.update(actual_L, dt)
-                duty_R = state.pid_R.update(actual_R, dt)
+                if self.use_pid:
+                    # PID 모드 (피드포워드+PID)
+                    duty_L = state.pid_L.update(actual_L, dt)
+                    duty_R = state.pid_R.update(actual_R, dt)
+                else:
+                    # PID 사용 안함 (피드포워드만)
+                    duty_L = state.pid_L.update_no_pid(dt)
+                    duty_R = state.pid_R.update_no_pid(dt)
             else:
                 duty_L = 0.0
                 duty_R = 0.0

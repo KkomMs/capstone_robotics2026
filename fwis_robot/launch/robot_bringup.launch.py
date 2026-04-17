@@ -1,14 +1,21 @@
 # stm32 serial bridge + mobile robot node
 from launch import LaunchDescription
-from launch.actions import OpaqueFunction
-from launch.substitutions import PathJoinSubstitution
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.substitutions import PathJoinSubstitution, LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 import yaml
 import xacro
 
 def generate_launch_description():
-    return LaunchDescription([OpaqueFunction(function=_launch_setup)])
+    return LaunchDescription([
+        DeclareLaunchArgument(
+            'use_pid',
+            default_value='true',
+            description='Enable PID control for inwheel motors'
+        ),
+        OpaqueFunction(function=_launch_setup),
+    ])
 
 def _launch_setup(context, *args, **kwargs):
     pkg_share   = FindPackageShare('fwis_robot')
@@ -42,6 +49,13 @@ def _launch_setup(context, *args, **kwargs):
     if not imu_params:
         raise RuntimeError(f"[robot_bringup.launch] '{params_path}'에 "
                            f"imu_node.ross__parameters가 없습니다.")
+    
+    # ─────────────────────────────────────────────────────────────────────────────
+    # use_pid launch argument
+    # ─────────────────────────────────────────────────────────────────────────────
+    use_pid_str = LaunchConfiguration('use_pid').perform(context)
+    use_pid = use_pid_str.lower() in ('true', '1', 'yes')
+
     # ─────────────────────────────────────────────────────────────────────────────
     # STM32 serial bridge
     # ─────────────────────────────────────────────────────────────────────────────
@@ -50,6 +64,7 @@ def _launch_setup(context, *args, **kwargs):
         executable='stm32_bridge',
         name='stm32_bridge',
         output='screen',
+        parameters=[{'use_pid': use_pid}],
     )
     # ─────────────────────────────────────────────────────────────────────────────
     # Controller
