@@ -39,7 +39,7 @@ defaults:
         lpf_angular: 0.0              # 1차 LPF 계수 (0.0 ~ 1.0) 0 = off
         limit_linear_abs: 0.7         # [m/s] 최종 선속도 절대 상한
         limit_angular_abs: 1.5        # [rad/s] 최종 각속도 절대 상한
-        lpf_alpha: 0.9                # 모터 피드백 LPF 계수 (0.0 ~ 1.0) 낮을수록 필터링 강함
+        lpf_alpha: 0.2                # 모터 피드백 LPF 계수 (0.0 ~ 1.0) 낮을수록 필터링 강함
 
     # ───────── Motor Profile ─────────
     common_profile: &common_profile

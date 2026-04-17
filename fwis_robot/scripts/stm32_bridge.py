@@ -25,7 +25,6 @@ stm32_bridge.py  (피드포워드 + PID 속도 제어 버전)
 
 Duty 보정:
     2차 다항식 근사하여 보정 계수 계산
-    - 실제속도 = 5.7979 * duty^2 + 0.9779 * duty -> 역함수 이용
 
 수정 사항:
   1) 정지 바이패스: target≈0 → duty=0 즉시 + 버퍼 클리어
@@ -58,11 +57,11 @@ WHEEL_CIRCUMF_M   = 3.14159265 * WHEEL_DIAMETER_M
 MAX_WHEEL_VEL_MS = 1.4
 
 # ──────────────────────────────────────────────────────────────
-# Duty 보정 상수 (원점 통과하는 2차 다항식)
+# Duty 보정 상수
 # ──────────────────────────────────────────────────────────────
-DUTY_COEF_2 = 5.7979
-DUTY_COEF_1 = 0.9779
-
+DUTY_COEF_A = -6.3317
+DUTY_COEF_B = 6.1045
+DUTY_COEF_C = -0.6874
 
 # ──────────────────────────────────────────────────────────────
 # PID 게인 (기존 값 유지)
@@ -104,9 +103,14 @@ def _vel_to_duty(target_vel: float) -> float:
     
     sign = 1.0 if target_vel >= 0.0 else -1.0
     t = abs(target_vel)
-    disc = DUTY_COEF_1 * DUTY_COEF_1 + 4.0 * DUTY_COEF_2 * t
-    d = (-DUTY_COEF_1 + math.sqrt(disc)) / (2.0 * DUTY_COEF_2)
-    return max(-1.0, min(1.0, sign * d))
+
+    # 다항식의 근
+    disc = DUTY_COEF_B**2 - 4.0 * DUTY_COEF_A * (DUTY_COEF_C - t)
+    if disc < 0:
+        disc = 0.0
+    
+    duty = (-DUTY_COEF_B + math.sqrt(disc)) / (2.0 * DUTY_COEF_A)
+    return max(-1.0, min(1.0, sign * duty))
 
 
 # ──────────────────────────────────────────────────────────────
@@ -463,7 +467,7 @@ class STM32BridgeNode(Node):
         else:
             self.get_logger().info(
                 f'stm32_bridge 시작 (보정 피드포워드, PID 비활성 | '
-                f'DUTY_COEF_1={DUTY_COEF_1} DUTY_COEF_2={DUTY_COEF_2} | '
+                f'DUTY_COEF_A={DUTY_COEF_A} DUTY_COEF_B={DUTY_COEF_B} DUTY_COEF_C={DUTY_COEF_C} | '
                 f'MAX_VEL={MAX_WHEEL_VEL_MS}m/s)')
 
     # ── 이동평균 버퍼 클리어 ──────────────────────────────────

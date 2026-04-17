@@ -11,7 +11,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             'use_pid',
-            default_value='true',
+            default_value='false',
             description='Enable PID control for inwheel motors'
         ),
         OpaqueFunction(function=_launch_setup),
