@@ -24,9 +24,8 @@ stm32_bridge.py  (피드포워드 + PID 속도 제어 버전)
    duty = 목표속도 / MAX_WHEEL_VEL_MS (feedforward만, PID 없음)
 
 Duty 보정:
-    선형 근사하여 보정 계수 계산
-    - 실제속도 = 3.5258 * duty_sent - 0.2537
-    -> 역함수: corrected_duty = target_vel * 0.2836 + 0.0720
+    2차 다항식 근사하여 보정 계수 계산
+    - 실제속도 = 5.7979 * duty^2 + 0.9779 * duty -> 역함수 이용
 
 수정 사항:
   1) 정지 바이패스: target≈0 → duty=0 즉시 + 버퍼 클리어
@@ -46,6 +45,7 @@ import serial
 import threading
 import time
 import os
+import math
 
 
 # ──────────────────────────────────────────────────────────────
@@ -58,10 +58,10 @@ WHEEL_CIRCUMF_M   = 3.14159265 * WHEEL_DIAMETER_M
 MAX_WHEEL_VEL_MS = 1.4
 
 # ──────────────────────────────────────────────────────────────
-# Duty 보정 상수
+# Duty 보정 상수 (원점 통과하는 2차 다항식)
 # ──────────────────────────────────────────────────────────────
-DUTY_SCALE = 0.2836
-DUTY_OFFSET = 0.0720
+DUTY_COEF_2 = 5.7979
+DUTY_COEF_1 = 0.9779
 
 
 # ──────────────────────────────────────────────────────────────
@@ -96,6 +96,17 @@ def _sign(x: float) -> int:
     elif x < -1e-4:
         return -1
     return 0
+
+def _vel_to_duty(target_vel: float) -> float:
+    # 목표 속도(m/s)를 2차 다항식으로 보정된 duty로 변환
+    if abs(target_vel) < 1e-4:
+        return 0.0
+    
+    sign = 1.0 if target_vel >= 0.0 else -1.0
+    t = abs(target_vel)
+    disc = DUTY_COEF_1 * DUTY_COEF_1 + 4.0 * DUTY_COEF_2 * t
+    d = (-DUTY_COEF_1 + math.sqrt(disc)) / (2.0 * DUTY_COEF_2)
+    return max(-1.0, min(1.0, sign * d))
 
 
 # ──────────────────────────────────────────────────────────────
@@ -160,9 +171,8 @@ class WheelPID:
             self.filtered_deriv = 0.0
             return 0.0
 
-        # 보정 피드포워드 (duty = sign * |target| * SCALE + OFFSET)
-        sign = 1.0 if self.target >= 0.0 else -1.0
-        feedforward = sign * (abs(self.target) * DUTY_SCALE + DUTY_OFFSET)
+        # 보정 피드포워드
+        feedforward = _vel_to_duty(self.target)
 
         # 블랭킹 중이면 피드포워드만 출력, PID 안 돌림
         # STM32가 방향 전환하는 동안 피드백이 엉뚱하므로
@@ -210,9 +220,8 @@ class WheelPID:
             self.duty = 0.0
             return 0.0
 
-        # 보정 피드포워드 (duty = sign * |target| * SCALE + OFFSET)
-        sign = 1.0 if self.target >= 0.0 else -1.0
-        feedforward = sign * (abs(self.target) * DUTY_SCALE + DUTY_OFFSET)
+        # 보정 피드포워드
+        feedforward = _vel_to_duty(self.target)
         self.duty = max(-1.0, min(1.0, feedforward))
 
         return self.duty
@@ -446,15 +455,15 @@ class STM32BridgeNode(Node):
         # pid 사용 유무에 따라 로그 메시지 분기
         if self.use_pid:
             self.get_logger().info(
-                f'stm32_bridge 시작 (피드포워드+PID | '
+                f'stm32_bridge 시작 (보정 피드포워드+PID | '
                 f'KP={KP} KI={KI} KD={KD} | '
                 f'INT_LIM={INTEGRAL_LIMIT} DERIV_α={DERIV_FILTER_ALPHA} | '
                 f'BLANKING={DIR_CHANGE_BLANKING_SEC}s | '
                 f'MAX_VEL={MAX_WHEEL_VEL_MS}m/s)')
         else:
             self.get_logger().info(
-                f'stm32_bridge 시작 (피드포워드 전용, PID 비활성 | '
-                f'DUTY_SCALE={DUTY_SCALE} DUTY_OFFSET={DUTY_OFFSET} | '
+                f'stm32_bridge 시작 (보정 피드포워드, PID 비활성 | '
+                f'DUTY_COEF_1={DUTY_COEF_1} DUTY_COEF_2={DUTY_COEF_2} | '
                 f'MAX_VEL={MAX_WHEEL_VEL_MS}m/s)')
 
     # ── 이동평균 버퍼 클리어 ──────────────────────────────────
