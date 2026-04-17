@@ -277,18 +277,17 @@ private:
         const auto motor_cmds = controller_.Update(current_states_, dt);
 
         // --- FK 계산 ----------------------------------------
-        bool use_feedback = false;
+        bool use_feedback = true;
         std::vector<WheelState> fk_states(4);
 
         // 옵션1: 피드백 사용
         if (use_feedback) {
             for (int i = 0; i < 4; i++) {
                 fk_states[i].steering_ang = current_states_[i].steering_ang;
-                //fk_states[i].wheel_vel = current_states_[i].wheel_vel;
-                fk_states[i].wheel_vel = motor_cmds[i].wheel_vel;
+                fk_states[i].wheel_vel = current_states_[i].wheel_vel;
+                // fk_states[i].wheel_vel = motor_cmds[i].wheel_vel;
             }
         } else {    // 옵션2: 바퀴 명령 사용
-            std::vector<WheelState> fk_states_2(4);
             for (int i = 0; i < 4; i++) {
                 fk_states[i].steering_ang = motor_cmds[i].steering_ang;
                 fk_states[i].wheel_vel = motor_cmds[i].wheel_vel;
