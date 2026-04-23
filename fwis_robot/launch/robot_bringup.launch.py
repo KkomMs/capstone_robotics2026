@@ -113,14 +113,14 @@ def _launch_setup(context, *args, **kwargs):
     # ─────────────────────────────────────────────────────────────────────────────
     # Joystick
     # ─────────────────────────────────────────────────────────────────────────────
-    joystick_node = Node(
-        package='joy',
-        executable='joy_node',
+    joy_node = Node(
+        package='joy_linux',
+        executable='joy_linux_node',
         name='joy_node',
         parameters=[{
             'dev': '/dev/input/js0',
             'deadzone': 1.0,
-            'autorepeat_rate': 20.0
+            'autorepeat_rate': 50.0
         }],
     )
     teleop_twist_joy_node = Node(
@@ -147,7 +147,7 @@ def _launch_setup(context, *args, **kwargs):
             imu_node,
             robot_state_publisher,
             ekf_robot_localization_node,
-            # joystick_node,
-            # teleop_twist_joy_node,
+            #joy_node,
+            #teleop_twist_joy_node,
             rviz,
             ]
