@@ -123,7 +123,7 @@ private:
         odom_frame_id_ = GetParam<std::string>(*this, "odom_frame_id");
         loop_hz_       = GetParam<double>(*this, "control_rate");
         publish_tf_    = GetParam<bool>(*this, "publish_tf");
-        lpf_alpha_     = GetParam<double>(*this, "lpf_alpha");
+        deadband_threshold_     = GetParam<double>(*this, "deadband_threshold");
 
         // --- Joint Names -------------------------------------
         steer_joint_names_[0] = GetParam<std::string>(*this, "front_left_steer_joint");
@@ -236,12 +236,16 @@ private:
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 3000, "[InwheelFront] /wheel_vel/front data size < 2");
             return;
         }
-        // front 모터 feedback에 LPF 적용
+        // front 모터 feedback에 Deadband 적용
         for (int i = 0; i < 2; i++) {
             if (std::abs(msg->data[i]) < 0.001) {
                 filtered_vel_[i] = 0.0;
             } else {
-                filtered_vel_[i] = (lpf_alpha_ * msg->data[i]) + ((1.0 - lpf_alpha_) * filtered_vel_[i]);
+                double diff = std::abs(msg->data[i] - filtered_vel_[i]);    // 모터 피드백 값과 직전 값 비교
+                // 차이가 임계값 이상이면 현재 피드백 값으로 갱신
+                if (diff >= deadband_threshold_) {
+                    filtered_vel_[i] = msg->data[i];
+                }
             }
             current_states_[i].wheel_vel = filtered_vel_[i];
         }
@@ -252,12 +256,15 @@ private:
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 3000, "[InwheelFront] /wheel_vel/rear data size < 2");
             return;
         }
-        // rear 모터 feedback에 LPF 적용
+        // rear 모터 feedback에 Deadband 적용
         for (int i = 0; i < 2; i++) {
             if (std::abs(msg->data[i]) < 0.001) {
                 filtered_vel_[i+2] = 0.0;
             } else {
-                filtered_vel_[i+2] = (lpf_alpha_ * msg->data[i]) + ((1.0 - lpf_alpha_) * filtered_vel_[i+2]);
+                double diff = std::abs(msg->data[i] - filtered_vel_[i+2]);
+                if (diff >= deadband_threshold_) {
+                    filtered_vel_[i+2] = msg->data[i];
+                }
             }
             current_states_[i+2].wheel_vel = filtered_vel_[i+2];
         }
@@ -458,7 +465,7 @@ private:
     std::unordered_map<std::string, int> inwheel_name_to_idx_;
     double      loop_hz_;
     bool        publish_tf_;
-    double      lpf_alpha_;
+    double      deadband_threshold_;
     std::array<double, 4> filtered_vel_ = {0.0, 0.0, 0.0, 0.0};
 
     // 제어 객체
