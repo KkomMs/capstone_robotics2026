@@ -22,6 +22,7 @@ def _launch_setup(context, *args, **kwargs):
     urdf_xml    = xacro.process_file(urdf_str).toxml()
     rviz_cfg    = PathJoinSubstitution([config, 'robot_rviz.rviz'])
     ekf_params_yaml = PathJoinSubstitution([config, 'ekf.yaml'])
+    joy_params_yaml = PathJoinSubstitution([config, 'joystick.yaml'])
 
     # ─────────────────────────────────────────────────────────────────────────────
     # parameters
@@ -110,6 +111,26 @@ def _launch_setup(context, *args, **kwargs):
         remappings=[('odometry/filtered', 'odom')]
     )
     # ─────────────────────────────────────────────────────────────────────────────
+    # Joystick
+    # ─────────────────────────────────────────────────────────────────────────────
+    joystick_node = Node(
+        package='joy',
+        executable='joy_node',
+        name='joy_node',
+        parameters=[{
+            'dev': '/dev/input/js0',
+            'deadzone': 1.0,
+            'autorepeat_rate': 20.0
+        }],
+    )
+    teleop_twist_joy_node = Node(
+        package='teleop_twist_joy',
+        executable='teleop_node',
+        name='teleop_twist_joy_node',
+        parameters=[joy_params_yaml],
+    )
+    
+    # ─────────────────────────────────────────────────────────────────────────────
     # rviz
     # ─────────────────────────────────────────────────────────────────────────────
     rviz = Node(
@@ -126,5 +147,7 @@ def _launch_setup(context, *args, **kwargs):
             imu_node,
             robot_state_publisher,
             ekf_robot_localization_node,
+            # joystick_node,
+            # teleop_twist_joy_node,
             rviz,
             ]

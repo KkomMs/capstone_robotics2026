@@ -1,0 +1,19 @@
+teleop_twist_joy_node:
+  ros__parameters:
+    # 전진/후진
+    axis_x_linear:
+      x: 3        # 오른쪽 스틱 '상/하'
+    axis_y_linear:
+      y: 2        # 오른쪽 스틱 '좌/우'
+    axis_angular:
+      yaw: 0      # 왼쪽 스틱 '좌/우'
+    
+    # 최대 속도 (m/s, rad/s)
+    linear_max:
+      x: 0.3
+      y: 0.3
+    angular_max:
+      yaw: 0.41
+    
+    # Enable button - 이 버튼을 누른 상태에서만 입력 적용됨
+    enable_button: 6    # LB
