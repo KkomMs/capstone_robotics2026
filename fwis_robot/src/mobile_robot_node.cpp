@@ -4,6 +4,8 @@
 #include <cmath>
 #include <algorithm>
 #include <stdexcept>
+#include <numeric>
+#include <deque>
 
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/twist.hpp"
@@ -228,7 +230,7 @@ private:
     }
     
     // ==========================================================
-    //  Inwheel motor feedback 콜백 [m/s]
+    //  Inwheel motor feedback 콜백 [m/s] (Moving Average)
     // ==========================================================
     void HandleInwheelFront(const std_msgs::msg::Float32MultiArray::SharedPtr msg)
     {
@@ -236,17 +238,21 @@ private:
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 3000, "[InwheelFront] /wheel_vel/front data size < 2");
             return;
         }
-        // front 모터 feedback에 Deadband 적용
+        // front 모터 feedback에 Moving average 적용
         for (int i = 0; i < 2; i++) {
-            if (std::abs(msg->data[i]) < 0.001) {
-                filtered_vel_[i] = 0.0;
-            } else {
-                double diff = std::abs(msg->data[i] - filtered_vel_[i]);    // 모터 피드백 값과 직전 값 비교
-                // 차이가 임계값 이상이면 현재 피드백 값으로 갱신
-                if (diff >= deadband_threshold_) {
-                    filtered_vel_[i] = msg->data[i];
-                }
+            double vel_data = msg->data[i];
+            if (std::abs(vel_data) < 0.001) {
+                vel_data = 0.0;
             }
+            vel_history_[i].push_back(vel_data);
+            if (vel_history_[i].size() > window_size_) {
+                vel_history_[i].pop_front();        // 가장 오래된 데이터 삭제
+            }
+            // 평균 계산
+            double sum = 0.0;
+            for (double v : vel_history_[i]) sum += v;
+            filtered_vel_[i] = sum / vel_history_[i].size();
+
             current_states_[i].wheel_vel = filtered_vel_[i];
         }
     }
@@ -256,16 +262,21 @@ private:
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 3000, "[InwheelFront] /wheel_vel/rear data size < 2");
             return;
         }
-        // rear 모터 feedback에 Deadband 적용
+        // rear 모터 feedback에 Moving average 적용
         for (int i = 0; i < 2; i++) {
-            if (std::abs(msg->data[i]) < 0.001) {
-                filtered_vel_[i+2] = 0.0;
-            } else {
-                double diff = std::abs(msg->data[i] - filtered_vel_[i+2]);
-                if (diff >= deadband_threshold_) {
-                    filtered_vel_[i+2] = msg->data[i];
-                }
+            double vel_data = msg->data[i];
+            if (std::abs(vel_data) < 0.001) {
+                vel_data = 0.0;
             }
+            vel_history_[i+2].push_back(vel_data);
+            if (vel_history_[i+2].size() > window_size_) {
+                vel_history_[i+2].pop_front();
+            }
+            // 평균 계산
+            double sum = 0.0;
+            for (double v : vel_history_[i+2]) sum += v;
+            filtered_vel_[i+2] = sum / vel_history_[i+2].size();
+
             current_states_[i+2].wheel_vel = filtered_vel_[i+2];
         }
     }
@@ -466,7 +477,9 @@ private:
     double      loop_hz_;
     bool        publish_tf_;
     double      deadband_threshold_;
-    std::array<double, 4> filtered_vel_ = {0.0, 0.0, 0.0, 0.0};
+    std::array<double, 4> filtered_vel_;
+    std::array<std::deque<double>, 4> vel_history_;
+    const size_t window_size_ = 5;
 
     // 제어 객체
     Controller controller_;

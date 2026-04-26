@@ -147,7 +147,7 @@ def _launch_setup(context, *args, **kwargs):
             imu_node,
             robot_state_publisher,
             ekf_robot_localization_node,
-            #joy_node,
-            #teleop_twist_joy_node,
+            joy_node,
+            teleop_twist_joy_node,
             rviz,
             ]

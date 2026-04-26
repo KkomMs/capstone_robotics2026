@@ -44,7 +44,7 @@ defaults:
     # ───────── Motor Profile ─────────
     common_profile: &common_profile
       control_rate: 50.0              # [Hz]
-      publish_tf: true
+      publish_tf: false
 
       # - 조향 모터 속도 프로파일
       steer_profile:
