@@ -1,5 +1,4 @@
 // ─────────────────────────────────────────────────────────────
-//  imu_node.cpp
 //  iAHRS IMU 센서 데이터 수신 및 ROS2 토픽 발행 노드
 //
 //  기능:
@@ -10,10 +9,6 @@
 //  토픽:
 //    Published:
 //      /imu/data  (sensor_msgs/Imu)  50Hz
-//
-//  파라미터 (YAML):
-//    imu_port, imu_baudrate, imu_frame_id,
-//    sync_period_ms, sync_port, publish_rate
 // ─────────────────────────────────────────────────────────────
 #include <memory>
 #include <string>
@@ -170,7 +165,7 @@ private:
         msg.header.stamp    = this->get_clock()->now();
         msg.header.frame_id = imu_frame_id_;
 
-        // --- Orientation (Euler → Quaternion) ---
+        // --- Orientation (Euler -> Quaternion) ---
         if (data.euler_valid) {
             tf2::Quaternion q;
             q.setRPY(data.roll, data.pitch, data.yaw);
@@ -180,11 +175,9 @@ private:
             msg.orientation.w = q.w();
 
             // 공분산 (iAHRS 정지 상태 정밀도 기반 추정)
-            // roll, pitch: ~0.012 deg/h → 작음
-            // yaw: 지자기 OFF → 드리프트 있음 → 다소 큼
-            msg.orientation_covariance[0] = 0.0025;   // roll  variance [rad²]
+            msg.orientation_covariance[0] = 0.0025;   // roll  variance
             msg.orientation_covariance[4] = 0.0025;   // pitch variance
-            msg.orientation_covariance[8] = 0.01;     // yaw   variance (지자기 OFF)
+            msg.orientation_covariance[8] = 0.01;     // yaw   variance
         } else {
             // orientation 데이터 없음
             msg.orientation_covariance[0] = -1.0;
@@ -196,7 +189,6 @@ private:
             msg.angular_velocity.y = data.gy;
             msg.angular_velocity.z = data.gz;
 
-            // ICM-20948 noise: 0.015 dps/√Hz → 약 2.6e-4 rad/s/√Hz
             msg.angular_velocity_covariance[0] = 0.001;
             msg.angular_velocity_covariance[4] = 0.001;
             msg.angular_velocity_covariance[8] = 0.001;
@@ -210,7 +202,6 @@ private:
             msg.linear_acceleration.y = data.ay;
             msg.linear_acceleration.z = data.az;
 
-            // ICM-20948 noise: 230 μg/√Hz → 약 2.26e-3 m/s²/√Hz
             msg.linear_acceleration_covariance[0] = 0.01;
             msg.linear_acceleration_covariance[4] = 0.01;
             msg.linear_acceleration_covariance[8] = 0.01;
@@ -220,7 +211,7 @@ private:
 
         imu_pub_->publish(msg);
 
-        // 디버그 로그 (1초 간격)
+        // [Debug]
         RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
             "[IMU] euler(deg): r=%.2f p=%.2f y=%.2f | gyro(dps): %.2f %.2f %.2f | acc(m/s²): %.2f %.2f %.2f",
             data.roll * 180.0 / M_PI, data.pitch * 180.0 / M_PI, data.yaw * 180.0 / M_PI,
