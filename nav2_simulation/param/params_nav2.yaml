@@ -138,15 +138,15 @@ controller_server:
       # ── MPC 파라미터 ───────────────────────────
       desired_linear_vel: 0.4
       lookahead_dist: 0.3
-      control_period: 0.01         # 100 [Hz]
+      control_period: 0.02         # 50 [Hz]
       prediction_horizon: 10       # 예측 구간
-      max_steer_angle: 89.9        # [deg]
+      max_steer_angle: 180.0       # [deg]
       # ── 주행 모드  ─────────────────────────────
       reversing_mode: true         # 후진 모드
       point_turning_mode: false    # 제자리 회전 모드
       # ── cost function 가중치 ───────────────────
       ## 상태 오차 가중치
-      Q_y: 200.0                  # 횡방향 오차 가중치. 값이 클수록 경로 중앙 유지하려고 함
+      Q_y: 100.0                  # 횡방향 오차 가중치. 값이 클수록 경로 중앙 유지하려고 함
       Q_phi: 10.0                 # 선수각 오차 가중치. 값이 클수록 차체 방향 유지하려고 함 (crab walking)
       ## 제어 입력 가중치
       R_u: 0.1                    # 조향각 크기 페널티. 값이 클수록 조향각 변화 작음
@@ -285,7 +285,7 @@ global_costmap:
 map_server:
   ros__parameters:
     use_sim_time: False                   # add
-    yaml_filename: "demo_room.yaml"       # 수정
+    yaml_filename: "test_room.yaml"
 
 map_saver:
   ros__parameters:

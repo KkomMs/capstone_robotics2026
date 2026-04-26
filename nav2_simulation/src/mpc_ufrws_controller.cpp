@@ -629,7 +629,7 @@ bool MpcUFRWSController::orientationModes(
       WheelVelocities vel;
 
        // 제자리 회전 각속도 (+: CCW, -: CW)
-      double target_yaw_rate = (angle_diff > 0) ? 0.7 : -0.7;
+      double target_yaw_rate = (angle_diff > 0) ? 0.5 : -0.5;
 
       computePointTurnCommands(target_yaw_rate, steer, vel);
 

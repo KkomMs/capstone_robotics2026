@@ -10,14 +10,14 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    pkg_dir = get_package_share_directory('nav2_simulation')
+    pkg_dir = get_package_share_directory('fwis_navigation')
     use_sim_time = LaunchConfiguration('use_sim_time', default='false')
     map_dir = LaunchConfiguration(
         'map',
         default=os.path.join(
             pkg_dir,
             'map',
-            'demo_room.yaml'))      # 이름 바꾸기
+            'test_room.yaml'))      # 이름 바꾸기
 
     param_file_name = 'params_nav2.yaml'
     param_dir = LaunchConfiguration(
@@ -38,7 +38,7 @@ def generate_launch_description():
     nav2_launch_file_dir = os.path.join(get_package_share_directory('nav2_bringup'), 'launch')
 
     rviz_config_dir = os.path.join(
-        get_package_share_directory('nav2_simulation'),
+        get_package_share_directory('fwis_navigation'),
         'rviz',
         'rviz_nav2.rviz')
         
