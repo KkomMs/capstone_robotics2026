@@ -154,7 +154,8 @@ def _launch_setup(context, *args, **kwargs):
         output='screen'
     )
 
-    return [#stm32_bridge,
+    return [#ydlidar_launch,
+            stm32_bridge,
             mobile_node,
             #camera_node,
             imu_node,
@@ -163,5 +164,4 @@ def _launch_setup(context, *args, **kwargs):
             #joy_node,
             #teleop_twist_joy_node,
             rviz,
-            ydlidar_launch,
             ]
