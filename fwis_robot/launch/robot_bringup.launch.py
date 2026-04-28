@@ -6,7 +6,7 @@ from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 import yaml
 import xacro
-#ydlidar_launch 실행에 필요한 것들
+# ydlidar_launch 실행에 필요한 것들
 from launch.actions import IncludeLaunchDescription, OpaqueFunction, DeclareLaunchArgument
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from ament_index_python.packages import get_package_share_directory
@@ -50,8 +50,6 @@ def _launch_setup(context, *args, **kwargs):
         raise RuntimeError(f"[robot_bringup.launch] '{params_path}'에 "
                            f"imu_node.ross__parameters가 없습니다.")
     
-
-
     # ─────────────────────────────────────────────────────────────────────────────
     # ydlidar_launch
     # ─────────────────────────────────────────────────────────────────────────────
@@ -61,7 +59,6 @@ def _launch_setup(context, *args, **kwargs):
             '/launch/ydlidar_launch.py'
         ])
     )
-        
     # ─────────────────────────────────────────────────────────────────────────────
     # STM32 serial bridge
     # ─────────────────────────────────────────────────────────────────────────────

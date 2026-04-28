@@ -12,8 +12,6 @@
 #include "rclcpp/rclcpp.hpp"
 #include "pluginlib/class_loader.hpp"
 #include "pluginlib/class_list_macros.hpp"
-#include "std_msgs/msg/float64_multi_array.hpp"
-#include "std_msgs/msg/float32.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
@@ -34,7 +32,7 @@ struct VehicleState
 };
 
 /**
- * @brief 4WS 차량의 개별 바퀴 조향각 (Ackermann 기하학 적용 결과)
+ * @brief 개별 바퀴 조향각
  */
 struct WheelAngles
 {
@@ -45,7 +43,7 @@ struct WheelAngles
 };
 
 /**
- * @brief 4WS 차량의 개별 바퀴 속도
+ * @brief 개별 바퀴 속도
  */
 struct WheelVelocities
 {
@@ -86,7 +84,7 @@ public:
   void setSpeedLimit(const double & speed_limit, const bool & percentage) override;
 
   /**
-   * @brief 현재 포즈에서 속도 명령 계산
+   * @brief 현재 포즈에서 속도 명령(cmd_vel) 계산
    */
   geometry_msgs::msg::TwistStamped computeVelocityCommands(
     const geometry_msgs::msg::PoseStamped & pose,
@@ -132,7 +130,7 @@ protected:
   // ── UFRWS 기구학 모델 ───────────────────────────────────────────────────────
 
   /**
-   * @brief UFRWS 기구학 모델 (논문 Eq.6)
+   * @brief UFRWS 기구학 모델
    */
   VehicleState ufrwsModel(
     const VehicleState & state,
@@ -175,7 +173,7 @@ protected:
   std::vector<VehicleState> generateReferenceTrajectory(
     const VehicleState & current_state);
 
-  // ── 4WS Ackermann 기하학 ────────────────────────────────────────────────────
+  // ── 조향각 및 바퀴 속도 계산 ────────────────────────────────────────────────────
 
   /**
    * @brief 전/후륜 조향각 및 바퀴 속도 계산, 제자리 회전 속도 계산
@@ -184,16 +182,13 @@ protected:
    */
   WheelAngles computeWheelAngles(double delta_f, double delta_r) const;
   WheelVelocities computeWheelVelocities(double delta_f, double delta_r) const;
-  void computePointTurnCommands(double target_yaw_rate, WheelAngles & steer, WheelVelocities & vel) const;
-
-  // ── 발행 ────────────────────────────────────────────────────────────────────
-
-  void publishStopCommands();
+  /**
+   * @brief 조향각, 바퀴 속도를 이용한 cmd_vel 계산
+   */
+  void wheelToCmdVel(
+    const WheelAngles & steer, const WheelVelocities & vel,
+    double & vx, double & vy, double & wz) const;
   
-  // ── 발행 ────────────────────────────────────────────────────────────────────
-
-  void publishWheelCommands(const WheelAngles & steer, const WheelVelocities & vel);
-
   // ── 좌표 변환 ───────────────────────────────────────────────────────────────
 
   bool transformPose(
@@ -216,9 +211,7 @@ protected:
   rclcpp::Logger logger_{rclcpp::get_logger("MpcUFRWSController")};
   rclcpp::Clock::SharedPtr clock_;
 
-  std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Path>>      global_pub_;
-  std::array<rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::Float32>::SharedPtr, 4>    motor_steer_pubs_;
-  std::array<rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::Float32>::SharedPtr, 4>    motor_inwheel_pubs_;
+  std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Path>> global_pub_;
 
   // ── 차량 파라미터 ────────────────────────────────────────────────────────────
 
@@ -243,8 +236,8 @@ protected:
   bool is_point_turning_;     ///< 제자리 회전 여부
   double current_v_ref_;      ///< 현재 적용할 동적 속도 [m/s]
 
-  // ── 마지막 조향각 저장 ───────────────────────────────────────────────────────
-  WheelAngles last_steer_angles_;     ///< 마지막 조향각 (정지 명령 시 유지용)
+  // ── Goal 도달 판정 ──────────────────────────────────────────────────────────
+  double goal_dist_tol_{0.25};  ///< xy tolerance [m]
   
   // ── 비용 함수 가중치 ─────────────────────────────────────────────────────────
 
@@ -274,9 +267,7 @@ protected:
 
   // ── 타이머 ───────────────────────────────────────────────────────────────────
 
-  rclcpp::TimerBase::SharedPtr watchdog_timer_;
   rclcpp::Time last_cmd_time_;
-  void watchdogCallback();
 
   // ── 모드 처리 함수 ─────────────────────────────────────────────────────────────
   bool orientationModes(

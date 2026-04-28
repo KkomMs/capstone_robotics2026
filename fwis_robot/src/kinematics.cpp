@@ -51,7 +51,7 @@ RobotVelocity Kinematics::ForwardKinematics(const std::vector<WheelState>& wheel
     // FK 계산
     for (int i = 0; i < 4; i++) {
         auto [rx, ry] = GetWheelPos(i);
-        double v_linear = wheel_states[i].wheel_vel;        // [todo] 모터에서 받아오는 값이 선속도인지 각속도인지 확인하기
+        double v_linear = wheel_states[i].wheel_vel;        // [m/s]
         double theta_rad = wheel_states[i].steering_ang * M_PI / 180.0;
 
         double v_xi = v_linear * std::cos(theta_rad);

@@ -12,7 +12,7 @@
 #include "tf2/utils.h"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 
-#include "nav2_simulation/mpc_ufrws_controller.hpp"
+#include "fwis_navigation/mpc_ufrws_controller.hpp"
 
 using nav2_util::declare_parameter_if_not_declared;
 using nav2_util::geometry_utils::euclidean_distance;
@@ -28,10 +28,6 @@ double MpcUFRWSController::normalizeAngle(double angle)
   while (angle < -M_PI) { angle += 2.0 * M_PI; }
   return angle;
 }
-
-// ── 바퀴 index ───────────────────────────────────────────────────────
-constexpr std::array<int, 4> SteerMotorId = {2, 1, 4, 3};
-constexpr std::array<int, 4> InWheelMotorId = {1, 2, 3, 4};
 
 // ── NLopt 목적 함수 콜백 ───────────────────────────────────────────────────────
 double MpcUFRWSController::nloptObjectiveCb(
@@ -118,12 +114,6 @@ void MpcUFRWSController::configure(
     rclcpp::ParameterValue(5.0));
 
   // ── NLopt 최적화 파라미터 ────────────────────────────────────────────────────
-  //   opt_max_eval  : 실시간 보장을 위한 함수 평가 횟수 상한
-  //                   N=10일 때 함수 1회 평가 = mpcCost 호출 1회 (기울기 포함 시 21회)
-  //                   maxeval=100 → SLSQP 약 4~5회 반복 (매우 빠름)
-  //   opt_ftol_rel  : 비용 함수 상대 수렴 허용치
-  //   opt_xtol_rel  : 변수 상대 수렴 허용치
-  //   opt_grad_eps  : 유한 차분 스텝 크기 (너무 작으면 수치 오차, 너무 크면 부정확)
   declare_parameter_if_not_declared(node, plugin_name_ + ".opt_max_eval",
     rclcpp::ParameterValue(100));
   declare_parameter_if_not_declared(node, plugin_name_ + ".opt_ftol_rel",
@@ -201,14 +191,7 @@ void MpcUFRWSController::configure(
   nlopt_cb_data_.eps          = opt_grad_eps_;
 
   // ── 퍼블리셔 ────────────────────────────────────────────────────────────
-  global_pub_ = node->create_publisher<nav_msgs::msg::Path>(
-    "received_global_plan", 1);
-  for (int i = 0; i < 4; i++) {
-    motor_steer_pubs_[i] = node->create_publisher<std_msgs::msg::Float32>(
-      "/motor_" + std::to_string(SteerMotorId[i]) + "/steer", rclcpp::SystemDefaultsQoS());
-    motor_inwheel_pubs_[i] = node->create_publisher<std_msgs::msg::Float32>(
-      "/motor_" + std::to_string(InWheelMotorId[i]) + "/inwheel", rclcpp::SystemDefaultsQoS());
-  }
+  global_pub_ = node->create_publisher<nav_msgs::msg::Path>("received_global_plan", 1);
 
   RCLCPP_INFO(logger_,
     "[MpcUFRWSController] Configured. "
@@ -216,11 +199,8 @@ void MpcUFRWSController::configure(
     "max_steer=%.1f deg, optimizer=NLopt::LD_SLSQP, max_eval=%d",
     L_, W_, V_ref_, N_, dt_, max_steer_deg, opt_max_eval_);
 
-  // ── watchdog 타이머 ───────────────────────────────────────────────────────────
+  // ── 타이머 ───────────────────────────────────────────────────────────
   last_cmd_time_ = clock_->now();
-  watchdog_timer_ = node->create_wall_timer(
-    std::chrono::milliseconds(200),
-    std::bind(&MpcUFRWSController::watchdogCallback, this));
 }
 
 void MpcUFRWSController::cleanup()
@@ -228,30 +208,18 @@ void MpcUFRWSController::cleanup()
   RCLCPP_INFO(logger_, "Cleaning up MpcUFRWSController: %s", plugin_name_.c_str());
   nlopt_opt_.reset();
   global_pub_.reset();
-  for (int i = 0; i < 4; i++) {
-    motor_steer_pubs_[i].reset();
-    motor_inwheel_pubs_[i].reset();
-  }
 }
 
 void MpcUFRWSController::activate()
 {
   RCLCPP_INFO(logger_, "Activating MpcUFRWSController: %s", plugin_name_.c_str());
   global_pub_->on_activate();
-  for (int i = 0; i < 4; i++) {
-    motor_steer_pubs_[i]->on_activate();
-    motor_inwheel_pubs_[i]->on_activate();
-  }
 }
 
 void MpcUFRWSController::deactivate()
 {
   RCLCPP_INFO(logger_, "Deactivating MpcUFRWSController: %s", plugin_name_.c_str());
   global_pub_->on_deactivate();
-  for (int i = 0; i < 4; i++) {
-    motor_steer_pubs_[i]->on_deactivate();
-    motor_inwheel_pubs_[i]->on_deactivate();
-  }
 }
 
 void MpcUFRWSController::setSpeedLimit(
@@ -265,7 +233,7 @@ void MpcUFRWSController::setPlan(const nav_msgs::msg::Path & path)
 {
   global_pub_->publish(path);
   global_plan_ = path;
-  u0_.assign(static_cast<size_t>(N_) * 2, 0.0);  // 새 경로 → 워밍 스타트 초기화
+  u0_.assign(static_cast<size_t>(N_) * 2, 0.0);
   RCLCPP_INFO(logger_, "Global plan set: %zu poses.", path.poses.size());
 }
 
@@ -295,29 +263,16 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
     return geometry_msgs::msg::TwistStamped();
   }
 
-  // ── 0. Goal 도달 여부 확인 ────────────────────────────────────────────────
-  // Nav2 GoalChecker: xy_goal_tolerance / yaw_goal_tolerance 파라미터 기준으로
-  // 현재 포즈가 goal에 충분히 가까운지 판단한다.
-  // if (goal_checker) {
-  //   const auto & goal_pose = global_plan_.poses.back();
+  // ── 1. Goal checker tolerance 갱신 ─────────────────────────────────────
+  if (goal_checker) {
+    geometry_msgs::msg::Pose pose_tolerance;
+    geometry_msgs::msg::Twist vel_tolerance;
+    if (goal_checker->getTolerances(pose_tolerance, vel_tolerance)) {
+      goal_dist_tol_ = pose_tolerance.position.x;
+    }
+  }
 
-  //   if (goal_checker->isGoalReached(pose.pose, goal_pose.pose, velocity)) {
-  //     RCLCPP_INFO(logger_, "Goal reached. Stopping robot.");
-
-  //     // 바퀴 속도 0, 조향각 0으로 정지 명령 발행
-  //     publishStopCommands();
-
-  //     // Nav2에 정지 Twist 반환
-  //     geometry_msgs::msg::TwistStamped stop_cmd;
-  //     stop_cmd.header.frame_id = pose.header.frame_id;
-  //     stop_cmd.header.stamp    = clock_->now();
-  //     stop_cmd.twist.linear.x  = 0.0;
-  //     stop_cmd.twist.angular.z = 0.0;
-  //     return stop_cmd;
-  //   }
-  // }
-
-  // ── 1. 현재 상태 추출 ────────────────────────────────────────────────────
+  // ── 2. 현재 상태 추출 ────────────────────────────────────────────────────
   VehicleState current_state;
   current_state.x = robot_pose_in_plan_frame.pose.position.x;
   current_state.y = robot_pose_in_plan_frame.pose.position.y;
@@ -326,14 +281,40 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   current_state.theta = std::atan2(
     2.0 * (q.w * q.z + q.x * q.y),
     1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+  
+  // ── 3. goal 도달 여부 확인 ───────────────────────────────────────────────
+  if (goal_checker) {
+    const auto & goal_pose = global_plan_.poses.back();
+    if (goal_checker->isGoalReached(
+          pose.pose, goal_pose.pose, velocity))
+    {
+      RCLCPP_INFO_THROTTLE(logger_, *clock_, 2000,
+        "Goal reached. Sending zero velocity.");
+      geometry_msgs::msg::TwistStamped stop_cmd;
+      stop_cmd.header.frame_id = pose.header.frame_id;
+      stop_cmd.header.stamp    = clock_->now();
+      return stop_cmd;
+    }
+  }
 
-  // ── 2. 후진 모드 또는 제자리 회전 모드 ──────────────────────────────────────
+  // ── 4. 후진 모드 또는 제자리 회전 모드 ──────────────────────────────────────
   geometry_msgs::msg::TwistStamped cmd_vel;
   if (orientationModes(current_state, pose, cmd_vel)) {
     return cmd_vel;
   }
 
-  // ── 3. N 스텝 참조 궤적 생성 ──────────────────────────────────────────────
+  // ── 5. goal 접근 시 감속 ────────────────────────────────────────────────
+  const auto & goal_pt = global_plan_.poses.back().pose.position;
+  const double dist_to_goal = std::hypot(
+    goal_pt.x - current_state.x,
+    goal_pt.y - current_state.y);
+
+  if (dist_to_goal < lookahead_dist_) {
+    const double ratio = std::max(0.0, (dist_to_goal - goal_dist_tol_) / (lookahead_dist_ - goal_dist_tol_));
+    current_v_ref_ *= ratio;
+  }
+
+  // ── 6. N 스텝 참조 궤적 생성 ──────────────────────────────────────────────
   std::vector<VehicleState> target_seq;
   try {
     target_seq = generateReferenceTrajectory(current_state);
@@ -341,39 +322,39 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
     RCLCPP_WARN(logger_, "Reference trajectory failed: %s", e.what());
     geometry_msgs::msg::TwistStamped stop_cmd;
     stop_cmd.header = pose.header;
+    stop_cmd.header.stamp    = clock_->now();
     return stop_cmd;
   }
 
-  // ── 4. NLopt 최적화 ────────────────────────────────────────────────────────
+  // ── 5. NLopt 최적화 ────────────────────────────────────────────────────────
   const std::vector<double> optimal_u = optimizeMPC(current_state, target_seq);
 
   // Receding Horizon: 첫 번째 스텝의 제어 입력만 실제로 인가
   const double delta_f = optimal_u[0];
   const double delta_r = optimal_u[1];
 
-  // ── 5. 워밍 스타트 갱신 ───────────────────────────────────────────────────
+  // ── 6. 워밍 스타트 갱신 ───────────────────────────────────────────────────
   for (size_t i = 0; i < u0_.size() - 2; ++i) {
     u0_[i] = optimal_u[i + 2];
   }
   u0_[u0_.size() - 2] = 0.0;
   u0_[u0_.size() - 1] = 0.0;
 
-  // ── 6. 개별 바퀴 조향각 및 속도 계산 ────────────────────────────────────────
+  // ── 7. 최종 cmd_vel 계산 ─────────────────────────────────────────────────
   const WheelAngles steer = computeWheelAngles(delta_f, delta_r);
   const WheelVelocities vel = computeWheelVelocities(delta_f, delta_r);
 
-  // ── 7. 바퀴 명령 발행 ────────────────────────────────────────────────────
-  publishWheelCommands(steer, vel);
+  double cmd_vx = 0.0;
+  double cmd_vy = 0.0;
+  double cmd_wz = 0.0;
 
-  // ── 8. Nav2 표준 TwistStamped 반환 ───────────────────────────────────────
-  const double avg_steer = (delta_f + delta_r) / 2.0;
-  const double yaw_rate  = V_ref_ * std::cos(avg_steer) / L_ * (delta_f - delta_r);
+  wheelToCmdVel(steer, vel, cmd_vx, cmd_vy, cmd_wz);
 
-  //geometry_msgs::msg::TwistStamped cmd_vel;
   cmd_vel.header.frame_id = pose.header.frame_id;
   cmd_vel.header.stamp    = clock_->now();
-  cmd_vel.twist.linear.x  = current_v_ref_;
-  cmd_vel.twist.angular.z = yaw_rate;
+  cmd_vel.twist.linear.x  = cmd_vx;
+  cmd_vel.twist.linear.y  = cmd_vy;
+  cmd_vel.twist.angular.z = cmd_wz;
 
   return cmd_vel;
 }
@@ -625,19 +606,14 @@ bool MpcUFRWSController::orientationModes(
     }
 
     if (is_point_turning_) {
-      WheelAngles steer;
-      WheelVelocities vel;
-
        // 제자리 회전 각속도 (+: CCW, -: CW)
       double target_yaw_rate = (angle_diff > 0) ? 0.5 : -0.5;
 
-      computePointTurnCommands(target_yaw_rate, steer, vel);
-
-      publishWheelCommands(steer, vel);
-
+      // cmd_vel 계산
       cmd_vel.header.frame_id = pose.header.frame_id;
       cmd_vel.header.stamp    = clock_->now();
       cmd_vel.twist.linear.x  = 0.0;
+      cmd_vel.twist.linear.y  = 0.0;
       cmd_vel.twist.angular.z = target_yaw_rate;
 
       return true;
@@ -730,81 +706,34 @@ WheelVelocities MpcUFRWSController::computeWheelVelocities(double delta_f, doubl
   return wv;
 }
 
-// ── 4WIS 모델의 제자리 회전 속도 ────────────────────────────────────────────────
-void MpcUFRWSController::computePointTurnCommands(
-  double target_yaw_rate,
-  WheelAngles & steer,
-  WheelVelocities & vel) const
+void MpcUFRWSController::wheelToCmdVel(
+  const WheelAngles & steer, const WheelVelocities & vel,
+  double & vx, double & vy, double & wz) const
 {
-  double gamma_f = std::atan2(W_ / 2.0, Lf_);
-  double gamma_r = std::atan2(W_ / 2.0, Lr_);
+  const std::array<double, 4> rx = {Lf_, Lf_, -Lr_, -Lr_};
+  const std::array<double, 4> ry = {W_/2.0, -W_/2.0, W_/2.0, -W_/2.0};
 
-  // 각 바퀴의 장착 위치에서 ICR까지의 거리 계산
-  const double R_fl = std::hypot(Lf_, W_ / 2.0);
-  const double R_fr = std::hypot(Lf_, W_ / 2.0);
-  const double R_rl = std::hypot(Lr_, W_ / 2.0);
-  const double R_rr = std::hypot(Lr_, W_ / 2.0);
+  const std::array<double, 4> steer_rad = {steer.fl, steer.fr, steer.rl, steer.rr};
+  const std::array<double, 4> wheel_vel_rad = {vel.fl, vel.fr, vel.rl, vel.rr};
 
-  // 바퀴 조향각
-  steer.fl = -(M_PI_2 - gamma_f);
-  steer.fr =  (M_PI_2 - gamma_f);
-  steer.rl =  (M_PI_2 - gamma_r);
-  steer.rr = -(M_PI_2 - gamma_r);
+  double sum_vx = 0.0;
+  double sum_vy = 0.0;
+  double sum_wz = 0.0;
+  const double r2 = Lf_ * Lf_ + (W_/2.0) * (W_/2.0);
 
-  // 바퀴 각속도
-  vel.fl = (-target_yaw_rate * R_fl) / wheel_radius_;
-  vel.fr = (target_yaw_rate * R_fr) / wheel_radius_;
-  vel.rl = (-target_yaw_rate * R_rl) / wheel_radius_;
-  vel.rr = (target_yaw_rate * R_rr) / wheel_radius_;
-}
+  for (int i = 0; i < 4; ++i) {
+    double v_linear = wheel_vel_rad[i] * wheel_radius_;   // [m/s]
+    double v_xi = v_linear * std::cos(steer_rad[i]);
+    double v_yi = v_linear * std::sin(steer_rad[i]);
 
-// ── 정지 명령 발행 ─────────────────────────────────────────────────────────────
-
-void MpcUFRWSController::publishStopCommands()
-{
-  // 속도 0
-  std_msgs::msg::Float32 drive_msg;
-  drive_msg.data = 0.0f;
-
-  // 마지막 조향각 유지
-  const std::array<double, 4> last_steer_cmds = {
-    last_steer_angles_.fl,
-    last_steer_angles_.fr,
-    last_steer_angles_.rl,
-    last_steer_angles_.rr
-  };
-
-  std_msgs::msg::Float32 steer_msg;
-
-  for (int i = 0; i < 4; i++) {
-    steer_msg.data = static_cast<float>(last_steer_cmds[i]);
-    motor_inwheel_pubs_[i]->publish(drive_msg);
-    motor_steer_pubs_[i]->publish(steer_msg);
+    sum_vx += v_xi;
+    sum_vy += v_yi;
+    sum_wz += (v_yi * rx[i] - v_xi * ry[i]) / r2;
   }
-}
 
-// ── 바퀴 명령 발행 ─────────────────────────────────────────────────────────────
-
-void MpcUFRWSController::publishWheelCommands(const WheelAngles & steer, const WheelVelocities & vel)
-{ 
-  // 조향각 저장
-  last_steer_angles_ = steer;
-
-  const std::array<double, 4> steer_cmds = {steer.fl, steer.fr, steer.rl, steer.rr};
-  const std::array<double, 4> vel_cmds = {vel.fl, vel.fr, vel.rl, vel.rr};
-
-  std_msgs::msg::Float32 steer_msg;
-  std_msgs::msg::Float32 drive_msg;
-
-  for (int i = 0; i < 4; i++) {
-    // 조향 각도 명령 발행
-    steer_msg.data = static_cast<float>(steer_cmds[i]);
-    motor_steer_pubs_[i]->publish(steer_msg);
-
-    // 구동 속도 명령
-    drive_msg.data = static_cast<float>(vel_cmds[i]);
-    motor_inwheel_pubs_[i]->publish(drive_msg);
-  }
+  vx = sum_vx / 4.0;
+  vy = sum_vy / 4.0;
+  wz = sum_wz / 4.0;
 }
 
 // ── TF 좌표 변환 ──────────────────────────────────────────────────────────────
@@ -842,15 +771,6 @@ bool MpcUFRWSController::transformPose(
   } catch (tf2::TransformException & ex) {
     RCLCPP_ERROR(logger_, "transformPose exception: %s", ex.what());
     return false;
-  }
-}
-
-// ── watchdog 콜백 ────────────────────────────────────────────────────────────
-void MpcUFRWSController::watchdogCallback()
-{ 
-  // 0.2초 이상 컨트롤러가 호출되지 않았다면 정지
-  if((clock_->now() - last_cmd_time_).seconds() > 0.2) {
-    publishStopCommands();
   }
 }
 
