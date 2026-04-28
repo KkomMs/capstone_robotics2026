@@ -6,6 +6,10 @@ from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 import yaml
 import xacro
+#ydlidar_launch 실행에 필요한 것들
+from launch.actions import IncludeLaunchDescription, OpaqueFunction, DeclareLaunchArgument
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from ament_index_python.packages import get_package_share_directory
 
 def generate_launch_description():
     return LaunchDescription([
@@ -46,6 +50,18 @@ def _launch_setup(context, *args, **kwargs):
         raise RuntimeError(f"[robot_bringup.launch] '{params_path}'에 "
                            f"imu_node.ross__parameters가 없습니다.")
     
+
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # ydlidar_launch
+    # ─────────────────────────────────────────────────────────────────────────────
+    ydlidar_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            get_package_share_directory('ydlidar_ros2_driver'),
+            '/launch/ydlidar_launch.py'
+        ])
+    )
+        
     # ─────────────────────────────────────────────────────────────────────────────
     # STM32 serial bridge
     # ─────────────────────────────────────────────────────────────────────────────
@@ -141,13 +157,14 @@ def _launch_setup(context, *args, **kwargs):
         output='screen'
     )
 
-    return [stm32_bridge,
+    return [#stm32_bridge,
             mobile_node,
             #camera_node,
             imu_node,
             robot_state_publisher,
             ekf_robot_localization_node,
-            joy_node,
-            teleop_twist_joy_node,
+            #joy_node,
+            #teleop_twist_joy_node,
             rviz,
+            ydlidar_launch,
             ]

@@ -127,7 +127,7 @@ std::vector<WheelState> Kinematics::InverseKinematics(double linear_x, double li
         }
 
         double final_angle_rad = current_angle_rad + ang_diff;
-
+        
         // 조향각을 -pi ~ pi 사이로 clamping
         if (final_angle_rad > M_PI) {
             final_angle_rad -= M_PI;

@@ -136,7 +136,7 @@ controller_server:
     FollowPath:
       plugin: "mpc_ufrws_controller::MpcUFRWSController"
       # ── MPC 파라미터 ───────────────────────────
-      desired_linear_vel: 0.4
+      desired_linear_vel: 0.2
       lookahead_dist: 0.3
       control_period: 0.02         # 50 [Hz]
       prediction_horizon: 10       # 예측 구간

@@ -123,8 +123,13 @@ std::vector<Command> Controller::Update(const std::vector<WheelState>& current_s
     // [6-8] 프로파일 & 모터 동기화
     for (int i = 0; i < 4; i++) {
         const double target_steer = ik[i].steering_ang;
-        const double current_ang = steer_cmd_pos_[i];       // 실제 모터값 대신 cmd 값 사용
-        const double steer_err = std::fabs(target_steer - steer_cmd_pos_[i]);
+        const double current_ang = steer_cmd_pos_[i];               // [조향 프로파일] 실제 모터값 대신 cmd 값 사용
+        const double actual_ang = current_states[i].steering_ang;   // [구동 동기화] 실제 피드백 사용
+        
+        // option 1. cmd 기준 오차
+        const double steer_err_cmd = std::fabs(target_steer - steer_cmd_pos_[i]);
+        // option 2. 모터 피드백 기준 오차
+        const double steer_err_fb = std::fabs(target_steer - actual_ang);
 
         // [6] 조향 사다리꼴 프로파일
         double cmd_steer = SteerProfile(i, target_steer, current_ang, dt);
@@ -133,13 +138,13 @@ std::vector<Command> Controller::Update(const std::vector<WheelState>& current_s
         double target_drive = ik[i].wheel_vel;
 
         if (params_.wait_for_steer) {   // 조향이 완료된 후 모터 구동
-            if (steer_err > params_.steer_position_tolerance) {
+            if (steer_err_fb > params_.steer_position_tolerance) {
                 target_drive = 0.0;
             } else if (params_.drive_scale_by_steer_err) {
-                target_drive *= ComputeSteerSyncScale(steer_err);
+                target_drive *= ComputeSteerSyncScale(steer_err_fb);
             }
         } else if (params_.drive_scale_by_steer_err) {  // 조향과 상관없이 모터 구동
-            target_drive *= ComputeSteerSyncScale(steer_err);
+            target_drive *= ComputeSteerSyncScale(steer_err_fb);
         }
 
         // [8] 인휠 가속/감속 프로파일

@@ -50,7 +50,7 @@ defaults:
       steer_profile:
         steer_max_velocity: 200.0           # [deg/s] 조향 최대 각속도
         steer_max_accel: 600.0              # [deg/s^2] 조향 최대 각가속도
-        steer_position_tolerance: 2.0       # [deg] 조향 완료 판정 임계값
+        steer_position_tolerance: 1.5       # [deg] 조향 완료 판정 임계값
       
       # - 인휠 모터 속도 프로파일
       inwheel_profile:
@@ -63,8 +63,8 @@ defaults:
       steer_inwheel_sync:
         wait_for_steer: true              # true: 조향 완료 후 구동 시작 / flase: 조향과 동시에 구동
         drive_scale_by_steer_err: true    # true: 조향 오차에 비례하여 인휠 모터 출력 스케일링
-        steer_err_full_drive: 3.0         # [deg] 이 오차 이하면 구동 모터 100%
-        steer_err_zero_drive: 20.0        # [deg] 이 오차 이상이면 구동 안함
+        steer_err_full_drive: 2.0         # [deg] 이 오차 이하면 구동 모터 100%
+        steer_err_zero_drive: 10.0        # [deg] 이 오차 이상이면 구동 안함
     
     # ───────── Camera Motor Serial ─────────
     ##### [todo] 카메라 연결 후 다시 작성
