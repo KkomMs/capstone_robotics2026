@@ -140,14 +140,25 @@ std::vector<WheelState> Kinematics::InverseKinematics(double linear_x, double li
         final_angle_rad = std::max(-M_PI, std::min(M_PI, final_angle_rad));     // 최종 clamp
 
         // 180도 또는 -180도 -> 0도로 변경
-        double threshold = 5.0 * M_PI / 180.0;      // 차이 임계값: 5도
+        double threshold = 2.0 * M_PI / 180.0;      // 차이 임계값: 2도
         if (std::abs(std::abs(final_angle_rad) - M_PI) < threshold) {
             final_angle_rad = 0.0;
             target_speed *= -1.0;
         }
 
-        commands[i].wheel_vel = target_speed;   // [m/s]
-        commands[i].steering_ang = final_angle_rad * 180.0 / M_PI;   // [deg]
+        // 바퀴 오프셋 적용
+        double angle_offset = 3.0;                      // [deg]
+
+        double final_angle_deg = final_angle_rad * 180.0 / M_PI;
+        if (final_angle_deg > 0.0) {
+            final_angle_deg = std::max(0.0, final_angle_deg - angle_offset);
+        } else if (final_angle_deg < 0.0) {
+            final_angle_deg = std::min(0.0, final_angle_deg + angle_offset);
+        } else {
+            final_angle_deg = 0.0;
+        }
+        commands[i].wheel_vel = target_speed;           // [m/s]
+        commands[i].steering_ang = final_angle_deg;     // [deg]
     }
 
     return commands;

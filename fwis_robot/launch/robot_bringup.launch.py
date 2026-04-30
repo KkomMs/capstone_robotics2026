@@ -154,7 +154,7 @@ def _launch_setup(context, *args, **kwargs):
         output='screen'
     )
 
-    return [#ydlidar_launch,
+    return [ydlidar_launch,
             stm32_bridge,
             mobile_node,
             #camera_node,
