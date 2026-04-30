@@ -301,23 +301,23 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
     1.0 - 2.0 * (q.y * q.y + q.z * q.z));
 
   // ── 3. 장애물 감지 ──────────────────────────────────────────────────────
-  const double current_footprint_cost = footprintCostmapCost(current_state);
-  // 정지
-  if (current_footprint_cost >= critical_cost_thresh_) {
-    RCLCPP_WARN_THROTTLE(logger_, *clock_, 500,
-      "[ObstacleAvoid] CRITICAL obstacle detected (cost=%.2f >= %.2f). Emergency stop!",
-      current_footprint_cost, critical_cost_thresh_);
-    geometry_msgs::msg::TwistStamped stop_cmd;
-    stop_cmd.header = pose.header;
-    stop_cmd.header.stamp    = clock_->now();
-    return stop_cmd;
-  }
-  // 감속
-  if (current_footprint_cost >= slowdown_cost_thresh_) {
-    RCLCPP_INFO_THROTTLE(logger_, *clock_, 1000,
-      "[ObstacleAvoid] Near obstacle (cost=%.2f >= %.2f). Slowing down to %.0f%%.",
-      current_footprint_cost, slowdown_cost_thresh_, slowdown_ratio_ * 100.0);
-  }
+  // const double current_footprint_cost = footprintCostmapCost(current_state);
+  // // 정지
+  // if (current_footprint_cost >= critical_cost_thresh_) {
+  //   RCLCPP_WARN_THROTTLE(logger_, *clock_, 500,
+  //     "[ObstacleAvoid] CRITICAL obstacle detected (cost=%.2f >= %.2f). Emergency stop!",
+  //     current_footprint_cost, critical_cost_thresh_);
+  //   geometry_msgs::msg::TwistStamped stop_cmd;
+  //   stop_cmd.header = pose.header;
+  //   stop_cmd.header.stamp    = clock_->now();
+  //   return stop_cmd;
+  // }
+  // // 감속
+  // if (current_footprint_cost >= slowdown_cost_thresh_) {
+  //   RCLCPP_INFO_THROTTLE(logger_, *clock_, 1000,
+  //     "[ObstacleAvoid] Near obstacle (cost=%.2f >= %.2f). Slowing down to %.0f%%.",
+  //     current_footprint_cost, slowdown_cost_thresh_, slowdown_ratio_ * 100.0);
+  // }
   
   // ── 4. goal 도달 여부 확인 ───────────────────────────────────────────────
   if (goal_checker) {
@@ -341,9 +341,9 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   }
 
   // ── 6. 장애물 근접 or goal 접근 시 감속 ─────────────────────────────────────
-  if (current_footprint_cost >= slowdown_cost_thresh_) {
-    current_v_ref_ *= slowdown_ratio_;
-  }
+  // if (current_footprint_cost >= slowdown_cost_thresh_) {
+  //   current_v_ref_ *= slowdown_ratio_;
+  // }
 
   const auto & goal_pt = global_plan_.poses.back().pose.position;
   const double dist_to_goal = std::hypot(

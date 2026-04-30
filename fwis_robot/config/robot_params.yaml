@@ -61,7 +61,7 @@ defaults:
       # - 두 모터 싱크
       #   조향 우선, 조향 오차에 비례하여 부드럽게 구동
       steer_inwheel_sync:
-        wait_for_steer: true              # true: 조향 완료 후 구동 시작 / flase: 조향과 동시에 구동
+        wait_for_steer: false              # true: 조향 완료 후 구동 시작 / flase: 조향과 동시에 구동
         drive_scale_by_steer_err: true    # true: 조향 오차에 비례하여 인휠 모터 출력 스케일링
         steer_err_full_drive: 2.0         # [deg] 이 오차 이하면 구동 모터 100%
         steer_err_zero_drive: 10.0        # [deg] 이 오차 이상이면 구동 안함

@@ -17,7 +17,7 @@ def generate_launch_description():
         default=os.path.join(
             pkg_dir,
             'map',
-            'test_room.yaml'))
+            'demo_room.yaml'))
 
     param_file_name = 'params_nav2.yaml'
     param_dir = LaunchConfiguration(
