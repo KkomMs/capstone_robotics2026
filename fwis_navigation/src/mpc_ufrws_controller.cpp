@@ -9,6 +9,7 @@
 #include "nav2_core/exceptions.hpp"
 #include "nav2_util/node_utils.hpp"
 #include "nav2_util/geometry_utils.hpp"
+#include "nav2_costmap_2d/costmap_2d.hpp"
 #include "tf2/utils.h"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 
@@ -123,6 +124,16 @@ void MpcUFRWSController::configure(
   declare_parameter_if_not_declared(node, plugin_name_ + ".opt_grad_eps",
     rclcpp::ParameterValue(1e-5));
 
+  // ── 장애물 회피 파라미터 ─────────────────────────────────────────────────────────
+  declare_parameter_if_not_declared(node, plugin_name_ + ".Q_obs",
+    rclcpp::ParameterValue(1000.0));
+  declare_parameter_if_not_declared(node, plugin_name_ + ".critical_cost_thresh",
+    rclcpp::ParameterValue(0.9));
+  declare_parameter_if_not_declared(node, plugin_name_ + ".slowdown_cost_thresh",
+    rclcpp::ParameterValue(0.5));
+  declare_parameter_if_not_declared(node, plugin_name_ + ".slowdown_ratio",
+    rclcpp::ParameterValue(0.3));
+
   // ── TF ───────────────────────────────────────────────────────────────────────
   declare_parameter_if_not_declared(node, plugin_name_ + ".transform_tolerance",
     rclcpp::ParameterValue(0.1));
@@ -161,6 +172,11 @@ void MpcUFRWSController::configure(
   node->get_parameter(plugin_name_ + ".opt_ftol_rel",  opt_ftol_rel_);
   node->get_parameter(plugin_name_ + ".opt_xtol_rel",  opt_xtol_rel_);
   node->get_parameter(plugin_name_ + ".opt_grad_eps",  opt_grad_eps_);
+
+  node->get_parameter(plugin_name_ + ".Q_obs",                 Q_obs_);
+  node->get_parameter(plugin_name_ + ".critical_cost_thresh",  critical_cost_thresh_);
+  node->get_parameter(plugin_name_ + ".slowdown_cost_thresh",  slowdown_cost_thresh_);
+  node->get_parameter(plugin_name_ + ".slowdown_ratio",        slowdown_ratio_);
 
   double transform_tolerance{0.1};
   node->get_parameter(plugin_name_ + ".transform_tolerance", transform_tolerance);
@@ -238,7 +254,6 @@ void MpcUFRWSController::setPlan(const nav_msgs::msg::Path & path)
 }
 
 // ── 메인 제어 루프 ─────────────────────────────────────────────────────────────
-
 geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   const geometry_msgs::msg::PoseStamped & pose,
   const geometry_msgs::msg::Twist & velocity,
@@ -250,6 +265,9 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
 
   // 함수가 호출될 때마다 시간 갱신
   last_cmd_time_ = clock_->now();
+
+  // costmap 포인터 갱신
+  costmap_ = costmap_ros_->getCostmap();
 
   geometry_msgs::msg::PoseStamped robot_pose_in_plan_frame;
   if (!transformPose(
@@ -281,8 +299,27 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   current_state.theta = std::atan2(
     2.0 * (q.w * q.z + q.x * q.y),
     1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+
+  // ── 3. 장애물 감지 ──────────────────────────────────────────────────────
+  const double current_footprint_cost = footprintCostmapCost(current_state);
+  // 정지
+  if (current_footprint_cost >= critical_cost_thresh_) {
+    RCLCPP_WARN_THROTTLE(logger_, *clock_, 500,
+      "[ObstacleAvoid] CRITICAL obstacle detected (cost=%.2f >= %.2f). Emergency stop!",
+      current_footprint_cost, critical_cost_thresh_);
+    geometry_msgs::msg::TwistStamped stop_cmd;
+    stop_cmd.header = pose.header;
+    stop_cmd.header.stamp    = clock_->now();
+    return stop_cmd;
+  }
+  // 감속
+  if (current_footprint_cost >= slowdown_cost_thresh_) {
+    RCLCPP_INFO_THROTTLE(logger_, *clock_, 1000,
+      "[ObstacleAvoid] Near obstacle (cost=%.2f >= %.2f). Slowing down to %.0f%%.",
+      current_footprint_cost, slowdown_cost_thresh_, slowdown_ratio_ * 100.0);
+  }
   
-  // ── 3. goal 도달 여부 확인 ───────────────────────────────────────────────
+  // ── 4. goal 도달 여부 확인 ───────────────────────────────────────────────
   if (goal_checker) {
     const auto & goal_pose = global_plan_.poses.back();
     if (goal_checker->isGoalReached(
@@ -297,13 +334,17 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
     }
   }
 
-  // ── 4. 후진 모드 또는 제자리 회전 모드 ──────────────────────────────────────
+  // ── 5. 후진 모드 또는 제자리 회전 모드 ──────────────────────────────────────
   geometry_msgs::msg::TwistStamped cmd_vel;
   if (orientationModes(current_state, pose, cmd_vel)) {
     return cmd_vel;
   }
 
-  // ── 5. goal 접근 시 감속 ────────────────────────────────────────────────
+  // ── 6. 장애물 근접 or goal 접근 시 감속 ─────────────────────────────────────
+  if (current_footprint_cost >= slowdown_cost_thresh_) {
+    current_v_ref_ *= slowdown_ratio_;
+  }
+
   const auto & goal_pt = global_plan_.poses.back().pose.position;
   const double dist_to_goal = std::hypot(
     goal_pt.x - current_state.x,
@@ -314,7 +355,7 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
     current_v_ref_ *= ratio;
   }
 
-  // ── 6. N 스텝 참조 궤적 생성 ──────────────────────────────────────────────
+  // ── 7. N 스텝 참조 궤적 생성 ──────────────────────────────────────────────
   std::vector<VehicleState> target_seq;
   try {
     target_seq = generateReferenceTrajectory(current_state);
@@ -326,21 +367,21 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
     return stop_cmd;
   }
 
-  // ── 5. NLopt 최적화 ────────────────────────────────────────────────────────
+  // ── 8. NLopt 최적화 ────────────────────────────────────────────────────────
   const std::vector<double> optimal_u = optimizeMPC(current_state, target_seq);
 
   // Receding Horizon: 첫 번째 스텝의 제어 입력만 실제로 인가
   const double delta_f = optimal_u[0];
   const double delta_r = optimal_u[1];
 
-  // ── 6. 워밍 스타트 갱신 ───────────────────────────────────────────────────
+  // ── 9. 워밍 스타트 갱신 ───────────────────────────────────────────────────
   for (size_t i = 0; i < u0_.size() - 2; ++i) {
     u0_[i] = optimal_u[i + 2];
   }
   u0_[u0_.size() - 2] = 0.0;
   u0_[u0_.size() - 1] = 0.0;
 
-  // ── 7. 최종 cmd_vel 계산 ─────────────────────────────────────────────────
+  // ── 10. 최종 cmd_vel 계산 ─────────────────────────────────────────────────
   const WheelAngles steer = computeWheelAngles(delta_f, delta_r);
   const WheelVelocities vel = computeWheelVelocities(delta_f, delta_r);
 
@@ -376,8 +417,52 @@ VehicleState MpcUFRWSController::ufrwsModel(
   return next;
 }
 
-// ── MPC 비용 함수 ─────────────────────────────────────────────────────────────
+// ── costmap 비용 ─────────────────────────────────────────────────────────────
+double MpcUFRWSController::costmapCost(double wx, double wy) const
+{
+  if (!costmap_) {
+    return 0.0;
+  }
+  unsigned int mx, my;
+  if (!costmap_->worldToMap(wx, wy, mx, my)) {
+    return 1.0;
+  }
 
+  const unsigned char cost = costmap_->getCost(mx, my);
+
+  if (cost == nav2_costmap_2d::NO_INFORMATION) return 0.5;                // 255
+  if (cost >= nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE) return 1.0;   // 253, 254
+
+  return static_cast<double>(cost) / 253.0;
+}
+
+// ── costmap 최댓값 ────────────────────────────────────────────────────────────
+double MpcUFRWSController::footprintCostmapCost(const VehicleState & state) const
+{
+  double max_cost = costmapCost(state.x, state.y);
+
+  // footprint 사각형 코너
+  const double cos_th = std::cos(state.theta);
+  const double sin_th = std::sin(state.theta);
+
+  const double half_w = W_ / 2.0;
+  const std::array<std::pair<double, double>, 4> corners = {{
+    { Lf_,  half_w},  // [FL]
+    { Lf_, -half_w},  // [FR]
+    {-Lr_,  half_w},  // [RL]
+    {-Lr_, -half_w},  // [RR]
+  }};
+
+  for (const auto & [lx, ly] : corners) {
+    const double gx = state.x + cos_th * lx - sin_th * ly;
+    const double gy = state.y + sin_th * lx + cos_th * ly;
+    max_cost = std::max(max_cost, costmapCost(gx, gy));
+  }
+
+  return max_cost;
+}
+
+// ── MPC 비용 함수 ─────────────────────────────────────────────────────────────
 double MpcUFRWSController::mpcCost(
   const std::vector<double> & u_seq,
   const VehicleState & current_state,
@@ -419,30 +504,36 @@ double MpcUFRWSController::mpcCost(
 
     prev_df = delta_f;
     prev_dr = delta_r;
+
+    // costmap 기반 장애물 비용
+    if (Q_obs_ > 0.0 && costmap_) {
+      const double obs_cost = footprintCostmapCost(state);
+      cost += Q_obs_ * obs_cost * obs_cost;
+    }
   }
 
   return cost;
 }
 
-// ── NLopt 최적화 ──────────────────────────────────
+// ── NLopt 최적화 ──────────────────────────────────────────────────────
 std::vector<double> MpcUFRWSController::optimizeMPC(
   const VehicleState & current_state,
   const std::vector<VehicleState> & target_seq)
 {
-  // ── 1. 콜백 데이터 갱신 (포인터만 교체, 힙 할당 없음) ──────────────────────
+  // [1] 콜백 데이터 갱신
   nlopt_cb_data_.current_state = &current_state;
   nlopt_cb_data_.target_seq   = &target_seq;
 
-  // ── 2. 목적 함수 등록 (옵티마이저 재사용, 데이터 포인터만 갱신) ─────────────
+  // [2] 목적 함수 등록
   nlopt_opt_->set_min_objective(nloptObjectiveCb, &nlopt_cb_data_);
 
-  // ── 3. 초기값: 워밍 스타트 + 박스 제약 클리핑 ───────────────────────────────
+  // [3] 초기값: 워밍 스타트 + 박스 제약 클리핑
   std::vector<double> u = u0_;
   for (auto & val : u) {
     val = std::max(-max_steer_, std::min(max_steer_, val));
   }
 
-  // ── 4. NLopt 최적화 실행 ─────────────────────────────────────────────────────
+  // [4] NLopt 최적화 실행
   double min_cost = std::numeric_limits<double>::max();
 
   try {
@@ -472,7 +563,6 @@ std::vector<double> MpcUFRWSController::optimizeMPC(
 }
 
 // ── 참조 궤적 생성 ─────────────────────────────────────────────────────────────
-
 std::vector<VehicleState> MpcUFRWSController::generateReferenceTrajectory(
   const VehicleState & current_state)
 {
@@ -576,7 +666,6 @@ std::vector<VehicleState> MpcUFRWSController::generateReferenceTrajectory(
 }
 
 // ── 경로 추종 모드 설정 ────────────────────────────────────────────────
-
 bool MpcUFRWSController::orientationModes(
   const VehicleState current_state,
   const geometry_msgs::msg::PoseStamped & pose,
@@ -632,7 +721,6 @@ bool MpcUFRWSController::orientationModes(
 }
 
 // ── 조향각 계산 ─────────────────────────────────────────────────────────────
-
 WheelAngles MpcUFRWSController::computeWheelAngles(double delta_f, double delta_r) const
 {
   const double tan_df  = std::tan(delta_f);
@@ -663,7 +751,6 @@ WheelAngles MpcUFRWSController::computeWheelAngles(double delta_f, double delta_
 }
 
 // ── 4WS 모델의 ICR을 이용한 개별 바퀴 속도 ────────────────────────────────────────
-
 WheelVelocities MpcUFRWSController::computeWheelVelocities(double delta_f, double delta_r) const
 {
   const double tan_df = std::tan(delta_f);
@@ -737,7 +824,6 @@ void MpcUFRWSController::wheelToCmdVel(
 }
 
 // ── TF 좌표 변환 ──────────────────────────────────────────────────────────────
-
 bool MpcUFRWSController::transformPose(
   const std::shared_ptr<tf2_ros::Buffer> tf,
   const std::string & frame,

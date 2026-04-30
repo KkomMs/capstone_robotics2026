@@ -15,12 +15,12 @@
 #include "nav_msgs/msg/path.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
+#include "nav2_costmap_2d/costmap_2d_ros.hpp"
 
 namespace mpc_ufrws_controller
 {
 
 // ── 데이터 구조체 ──────────────────────────────────────────────────────────────
-
 /**
  * @brief 차량 상태 벡터: 전역 좌표계 기준 [X, Y, theta(yaw)]
  */
@@ -54,7 +54,6 @@ struct WheelVelocities
 };
 
 // ── 컨트롤러 클래스 ────────────────────────────────────────────────────────────
-
 /**
  * @brief MPC-UFRWS Nav2 컨트롤러
  */
@@ -65,7 +64,6 @@ public:
   ~MpcUFRWSController() override = default;
 
   // ── Nav2 Controller 인터페이스 ──────────────────────────────────────────────
-
   /**
    * @brief 플러그인 초기화: 파라미터 로드 + NLopt 옵티마이저 설정
    *
@@ -97,7 +95,6 @@ public:
   void setPlan(const nav_msgs::msg::Path & path) override;
 
   // ── NLopt 콜백 ──────────────────────────────────────────────────────────────
-
   /**
    * @brief NLopt 목적 함수 콜백
    *
@@ -113,7 +110,6 @@ public:
 
 protected:
   // ── 내부 데이터 구조 ─────────────────────────────────────────────────────────
-
   /**
    * @brief NLopt 콜백에 전달되는 컨텍스트 데이터
    *
@@ -128,7 +124,6 @@ protected:
   };
 
   // ── UFRWS 기구학 모델 ───────────────────────────────────────────────────────
-
   /**
    * @brief UFRWS 기구학 모델
    */
@@ -138,7 +133,6 @@ protected:
     double delta_r) const;
 
   // ── MPC 비용 함수 ───────────────────────────────────────────────────────────
-
   /**
    * @brief MPC 비용 함수
    *
@@ -153,7 +147,6 @@ protected:
     const std::vector<VehicleState> & target_seq) const;
 
   // ── NLopt MPC 최적화 ────────────────────────────────────────────────────────
-
   /**
    * @brief NLopt LD_SLSQP 기반 MPC 최적화
    *
@@ -166,7 +159,6 @@ protected:
     const std::vector<VehicleState> & target_seq);
 
   // ── 참조 궤적 생성 ──────────────────────────────────────────────────────────
-
   /**
    * @brief 전역 경로에서 N 스텝 참조 상태 시퀀스 생성
    */
@@ -174,7 +166,6 @@ protected:
     const VehicleState & current_state);
 
   // ── 조향각 및 바퀴 속도 계산 ────────────────────────────────────────────────────
-
   /**
    * @brief 전/후륜 조향각 및 바퀴 속도 계산, 제자리 회전 속도 계산
    *
@@ -190,7 +181,6 @@ protected:
     double & vx, double & vy, double & wz) const;
   
   // ── 좌표 변환 ───────────────────────────────────────────────────────────────
-
   bool transformPose(
     const std::shared_ptr<tf2_ros::Buffer> tf,
     const std::string & frame,
@@ -198,12 +188,20 @@ protected:
     geometry_msgs::msg::PoseStamped & out_pose,
     const rclcpp::Duration & transform_tolerance) const;
 
+  // ── 장애물 회피 ─────────────────────────────────────────────────────────────
+  /**
+   * @brief 전역 좌표에서의 costmap 비용을 0.0 ~ 1.0 정규화값으로 반환
+   */
+  double costmapCost(double wx, double wy) const;
+  /**
+   * @brief 로봇 footprint 코너 4개에 대한 costmap 비용의 최댓값 반환
+   */
+  double footprintCostmapCost(const VehicleState & state) const;
+  
   // ── 유틸 ──────────────────────────────────────────────────────────────────
-
   static double normalizeAngle(double angle);
 
   // ── ROS2 인터페이스 ────────────────────────────────────────────────────
-
   rclcpp_lifecycle::LifecycleNode::WeakPtr node_;
   std::shared_ptr<tf2_ros::Buffer> tf_;
   std::string plugin_name_;
@@ -214,7 +212,6 @@ protected:
   std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Path>> global_pub_;
 
   // ── 차량 파라미터 ────────────────────────────────────────────────────────────
-
   double Lf_;           ///< 차량 중심~전축 거리 [m]
   double Lr_;           ///< 차량 중심~후축 거리 [m]
   double L_;            ///< 축간 거리 L = Lf + Lr [m]
@@ -222,7 +219,6 @@ protected:
   double wheel_radius_; ///< 바퀴 반지름 [m]
 
   // ── MPC 파라미터 ─────────────────────────────────────────────────────────────
-
   double V_ref_;            ///< 목표 주행 속도 [m/s]
   double lookahead_dist_;   ///< 예측 구간 총 거리 [m]
   double dt_;               ///< 제어 주기 [s]
@@ -240,14 +236,12 @@ protected:
   double goal_dist_tol_{0.25};  ///< xy tolerance [m]
   
   // ── 비용 함수 가중치 ─────────────────────────────────────────────────────────
-
   double Q_y_;     ///< 횡방향 오차 가중치
   double Q_phi_;   ///< 헤딩 각도 오차 가중치
   double R_u_;     ///< 조향각 크기 가중치
   double R_delta_; ///< 조향각 변화량 가중치
 
   // ── NLopt 최적화 멤버 ────────────────────────────────────────────────────────
-
   std::unique_ptr<nlopt::opt> nlopt_opt_;  ///< 재사용 NLopt 옵티마이저
   NloptCallbackData nlopt_cb_data_;        ///< 콜백 데이터
 
@@ -256,17 +250,23 @@ protected:
   double opt_xtol_rel_;   ///< 변수값 상대 수렴 허용치
   double opt_grad_eps_;   ///< 수치 기울기 유한 차분 스텝 크기
 
-  // ── 워밍 스타트 ──────────────────────────────────────────────────────────────
+  // ── 장애물 회피  ─────────────────────────────────────────────────────────────
+  double Q_obs_;                 ///< 장애물 비용 가중치
+  double critical_cost_thresh_;  ///< 긴급 정지 임계값
+  double slowdown_cost_thresh_;  ///< 감속 시작 임계값
+  double slowdown_ratio_;        ///< 감속 시 속도 비율
 
+  // ── costmap 캐시  ───────────────────────────────────────────────────────────
+  nav2_costmap_2d::Costmap2D * costmap_{nullptr};
+
+  // ── 워밍 스타트 ──────────────────────────────────────────────────────────────
   std::vector<double> u0_;  ///< 이전 최적해 (다음 주기 초기값)
 
   // ── 전역 경로 ────────────────────────────────────────────────────────────────
-
   nav_msgs::msg::Path global_plan_;
   rclcpp::Duration transform_tolerance_{0, 0};
 
   // ── 타이머 ───────────────────────────────────────────────────────────────────
-
   rclcpp::Time last_cmd_time_;
 
   // ── 모드 처리 함수 ─────────────────────────────────────────────────────────────

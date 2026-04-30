@@ -156,6 +156,11 @@ controller_server:
       opt_ftol_rel: 1.0e-6        # 비용 함수 상대 수렴 허용치
       opt_xtol_rel: 1.0e-6        # 변수 상대 수렴 허용치
       opt_grad_eps: 1.0e-5        # 유한 차분 스텝 크기
+      # ── 장애물 회피 ────────────────────────────
+      Q_obs: 1000.0               # 장애물 비용 가중치. 값이 클수록 강하게 회피
+      critical_cost_thresh: 0.9   # 긴급 정지 임계값(0.0 ~ 1.0)
+      slowdown_cost_thresh: 0.5   # 감속 시작 임계값(0.0 ~ 1.0)
+      slowdown_ratio: 0.3         # 감속 시 속도 비율 [%]
       # ── TF ───────────────────────────────────
       transform_tolerance: 0.1
 
