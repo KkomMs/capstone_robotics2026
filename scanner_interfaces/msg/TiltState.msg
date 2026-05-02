@@ -1,0 +1,3 @@
+builtin_interfaces/Time stamp
+int32 left_tick
+int32 right_tick

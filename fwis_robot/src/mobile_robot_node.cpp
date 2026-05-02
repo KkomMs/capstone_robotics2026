@@ -18,6 +18,7 @@
 #include "tf2_ros/transform_broadcaster.h"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "geometry_msgs/msg/vector3.hpp"
+#include "std_msgs/msg/bool.hpp"   
 
 #include "fwis_robot/kinematics.hpp"
 #include "fwis_robot/controller.hpp"
@@ -86,6 +87,16 @@ public:
         cmd_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
             "/cmd_vel", qos,
             std::bind(&MobileRobotNode::HandleCmdVel, this, std::placeholders::_1));
+
+        // [추가] pause: aruco_aligner_node 가 정렬 시작 시 true publish
+        pause_sub_ = this->create_subscription<std_msgs::msg::Bool>(
+            "/mobile_robot_pause", qos,
+            std::bind(&MobileRobotNode::HandlePause, this, std::placeholders::_1));
+ 
+        // [추가] scan_done: dynamixel_scan_node 가 스캔 완료 시 true publish → pause 해제
+        scan_done_sub_ = this->create_subscription<std_msgs::msg::Bool>(
+            "/scan_done", qos,
+            std::bind(&MobileRobotNode::HandleScanDone, this, std::placeholders::_1));
 
         // 조향 피드백 [degL, degR]
         steer_front_sub_ = this->create_subscription<std_msgs::msg::Float32MultiArray>(
@@ -204,7 +215,31 @@ private:
     // ==========================================================
     void HandleCmdVel(const geometry_msgs::msg::Twist::SharedPtr msg)
     {
+        if (paused_) return;  // [추가] pause 중에는 cmd_vel 무시
         controller_.SetReference(msg->linear.x, msg->linear.y, msg->angular.z);
+    }
+
+    // [추가] pause 콜백 — aruco_aligner_node 가 정렬 시작 시 true
+    void HandlePause(const std_msgs::msg::Bool::SharedPtr msg)
+    {
+        if (msg->data == paused_) return;
+        paused_ = msg->data;
+        if (paused_) {
+            controller_.SetReference(0.0, 0.0, 0.0);
+            RCLCPP_INFO(this->get_logger(), "[MobileRobotNode] ★ PAUSED - 정렬 중");
+        } else {
+            RCLCPP_INFO(this->get_logger(), "[MobileRobotNode] ★ RESUMED");
+        }
+    }
+ 
+    // [추가] scan_done 콜백 — 스캔 완료 후 pause 해제
+    void HandleScanDone(const std_msgs::msg::Bool::SharedPtr msg)
+    {
+        if (!msg->data || !paused_) return;
+        paused_    = false;
+        stop_sent_ = false;
+        RCLCPP_INFO(this->get_logger(),
+            "[MobileRobotNode] ★ 스캔 완료 수신 → 주행 재개");
     }
 
     // ==========================================================
@@ -290,6 +325,24 @@ private:
         double dt = (now - last_time_).seconds();
         if (dt <= 0.0 || dt > 1.0) dt = 1.0 / loop_hz_;
         last_time_ = now;
+
+        // [추가] pause 중: 정지 명령 1회 전송 후 odom/TF 유지
+        if (paused_) {
+            if (!stop_sent_) {
+                std::vector<Command> zero(4);
+                for (int i = 0; i < 4; i++) {
+                    zero[i].steering_ang = current_states_[i].steering_ang;
+                    zero[i].wheel_vel    = 0.0;
+                }
+                PublishWheelCommands(zero);
+                stop_sent_ = true;
+            }
+            const auto& pose = kinematics_.GetPose();
+            PublishOdom(pose, now);
+            if (publish_tf_) PublishTF(pose, now);
+            return;
+        }
+        stop_sent_ = false;
 
         // --- motor cmd 계산 ---------------------------------
         const auto motor_cmds = controller_.Update(current_states_, dt);
@@ -455,6 +508,8 @@ private:
     // ==========================================================
     // ROS
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr          cmd_sub_;
+    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr                pause_sub_; 
+    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr                scan_done_sub_; 
     rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr   steer_front_sub_;
     rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr   steer_rear_sub_;
     rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr   inwheel_front_sub_;
@@ -488,6 +543,9 @@ private:
     // 현재 상태
     std::vector<WheelState> current_states_;
     rclcpp::Time last_time_;
+
+    bool paused_    = false;
+    bool stop_sent_ = false;
 };
 
 // ==========================================================

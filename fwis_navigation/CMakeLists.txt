@@ -104,7 +104,7 @@ install(DIRECTORY include/
 # 패키지 설치
 #====================================================
 install(
-  DIRECTORY launch map param rviz src
+  DIRECTORY launch map param rviz scripts src
   DESTINATION share/${PROJECT_NAME}
 )
 

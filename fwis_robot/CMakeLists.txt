@@ -18,19 +18,43 @@ find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(ament_index_cpp REQUIRED)
+# [추가] 정렬/스캐너/다이나믹셀 노드 의존성
+find_package(ros2_aruco_interfaces REQUIRED)
+find_package(OpenCV REQUIRED)
+find_package(scanner_interfaces REQUIRED)
+
+# ====================================================
+# [추가] Zebra SDK 경로
+# ====================================================
+set(ZEBRA_SDK_ROOT "/home/hmh/scanner_sdk/usr")
+set(ZEBRA_INCLUDE_DIR "${ZEBRA_SDK_ROOT}/include")
+set(ZEBRA_LIB_DIR "${ZEBRA_SDK_ROOT}/lib/zebra-scanner/corescanner")
+set(ZEBRA_LIBS cs-client cs-common)
+
+# ====================================================
+# [추가] Dynamixel SDK 경로
+# ====================================================
+set(DYNAMIXEL_INCLUDE_DIR "/usr/local/include/dynamixel_sdk")
+set(DYNAMIXEL_LIB_DIR     "/usr/local/lib")
+set(DYNAMIXEL_LIB         "dxl_x64_cpp")
 
 # ====================================================
 # 경로
 # ====================================================
 set(INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 set(CONFIG ${CMAKE_CURRENT_SOURCE_DIR}/config)
-include_directories(${INCLUDE})
+include_directories(
+  ${INCLUDE}
+  ${ZEBRA_INCLUDE_DIR}        # [추가]
+  ${OpenCV_INCLUDE_DIRS}      # [추가]
+  ${DYNAMIXEL_INCLUDE_DIR}    # [추가]
+)
+link_directories(${ZEBRA_LIB_DIR})  # [추가]
 
 # ====================================================
 # core library
 # ====================================================
 add_library(fwis_robot_core
-  #src/camera.cpp
   src/controller.cpp
   src/kinematics.cpp
   src/imu_driver.cpp
@@ -65,30 +89,6 @@ ament_target_dependencies(mobile_robot_node
 )
 
 # ====================================================
-# [Node] camera_node
-# ====================================================
-# add_executable(camera_node
-#   src/camera_node.cpp
-# )
-# target_include_directories(camera_node PUBLIC
-#   $<BUILD_INTERFACE:${INCLUDE}>
-#   $<INSTALL_INTERFACE:include>  
-# )
-# target_link_libraries(camera_node
-#   fwis_robot_core
-# )
-# # [todo] 실제 필요한 의존성으로 수정하기
-# ament_target_dependencies(camera_node
-#   rclcpp
-#   geometry_msgs
-#   nav_msgs
-#   sensor_msgs
-#   std_msgs
-#   tf2
-#   tf2_ros
-# )
-
-# ====================================================
 # [Node] imu_node
 # ====================================================
 add_executable(imu_node
@@ -108,13 +108,78 @@ ament_target_dependencies(imu_node
 )
 
 # ====================================================
+# [추가] [Node] aruco_aligner_node
+# ====================================================
+add_executable(aruco_aligner_node
+  src/aruco_aligner_node.cpp
+)
+target_include_directories(aruco_aligner_node PUBLIC
+  $<BUILD_INTERFACE:${INCLUDE}>
+  $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(aruco_aligner_node
+  fwis_robot_core
+)
+ament_target_dependencies(aruco_aligner_node
+  rclcpp
+  std_msgs
+  ros2_aruco_interfaces
+)
+
+# ====================================================
+# [추가] [Node] zebra_scanner_node
+# ====================================================
+add_executable(zebra_scanner_node
+  src/zebra_scanner_node.cpp
+)
+target_include_directories(zebra_scanner_node PUBLIC
+  $<BUILD_INTERFACE:${INCLUDE}>
+  $<INSTALL_INTERFACE:include>
+  ${ZEBRA_INCLUDE_DIR}
+  ${OpenCV_INCLUDE_DIRS}
+)
+target_link_libraries(zebra_scanner_node
+  ${ZEBRA_LIBS}
+  ${OpenCV_LIBS}
+)
+ament_target_dependencies(zebra_scanner_node
+  rclcpp
+  std_msgs
+  geometry_msgs
+  ros2_aruco_interfaces
+  scanner_interfaces
+)
+
+# ====================================================
+# [추가] [Node] dynamixel_scan_node
+# ====================================================
+add_executable(dynamixel_scan_node
+  src/dynamixel_scan_node.cpp
+)
+target_include_directories(dynamixel_scan_node PUBLIC
+  $<BUILD_INTERFACE:${INCLUDE}>
+  $<INSTALL_INTERFACE:include>
+  ${DYNAMIXEL_INCLUDE_DIR}
+)
+target_link_libraries(dynamixel_scan_node
+  ${DYNAMIXEL_LIB}
+)
+ament_target_dependencies(dynamixel_scan_node
+  rclcpp
+  std_msgs
+  scanner_interfaces
+)
+
+# ====================================================
 # install - C++
 # ====================================================
 install(TARGETS
   fwis_robot_core
   mobile_robot_node
-  #camera_node
   imu_node
+  aruco_aligner_node    # [추가]
+  zebra_scanner_node    # [추가]
+  dynamixel_scan_node   # [추가]
   RUNTIME DESTINATION lib/${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib

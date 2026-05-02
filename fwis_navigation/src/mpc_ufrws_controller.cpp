@@ -104,6 +104,16 @@ void MpcUFRWSController::configure(
   declare_parameter_if_not_declared(node, plugin_name_ + ".point_turning_mode",
     rclcpp::ParameterValue(false));
 
+  // ── goal orientation alignment 파라미터 ────────────────────────────────────
+  declare_parameter_if_not_declared(node, plugin_name_ + ".rotate_to_goal_heading",
+    rclcpp::ParameterValue(true));
+  declare_parameter_if_not_declared(node, plugin_name_ + ".goal_xy_tolerance",
+    rclcpp::ParameterValue(0.15));
+  declare_parameter_if_not_declared(node, plugin_name_ + ".goal_yaw_tolerance",
+    rclcpp::ParameterValue(0.1));
+  declare_parameter_if_not_declared(node, plugin_name_ + ".goal_align_yaw_rate",
+    rclcpp::ParameterValue(0.5));
+
   // ── 비용 함수 가중치 ─────────────────────────────────────────────────────────
   declare_parameter_if_not_declared(node, plugin_name_ + ".Q_y",
     rclcpp::ParameterValue(200.0));
@@ -162,6 +172,12 @@ void MpcUFRWSController::configure(
     reversing_mode_ = false;
     point_turning_mode_ = false;
   }
+
+  node->get_parameter(plugin_name_ + ".rotate_to_goal_heading", rotate_to_goal_heading_);
+  node->get_parameter(plugin_name_ + ".goal_xy_tolerance",      goal_xy_tolerance_);
+  node->get_parameter(plugin_name_ + ".goal_yaw_tolerance",     goal_yaw_tolerance_);
+  node->get_parameter(plugin_name_ + ".goal_align_yaw_rate",    goal_align_yaw_rate_);
+  is_goal_aligning_ = false;
 
   node->get_parameter(plugin_name_ + ".Q_y",    Q_y_);
   node->get_parameter(plugin_name_ + ".Q_phi",  Q_phi_);
@@ -250,6 +266,7 @@ void MpcUFRWSController::setPlan(const nav_msgs::msg::Path & path)
   global_pub_->publish(path);
   global_plan_ = path;
   u0_.assign(static_cast<size_t>(N_) * 2, 0.0);
+  is_goal_aligning_ = false;
   RCLCPP_INFO(logger_, "Global plan set: %zu poses.", path.poses.size());
 }
 
@@ -318,8 +335,14 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   //     "[ObstacleAvoid] Near obstacle (cost=%.2f >= %.2f). Slowing down to %.0f%%.",
   //     current_footprint_cost, slowdown_cost_thresh_, slowdown_ratio_ * 100.0);
   // }
+
+  // ── 4. goal orientation 정렬 ───────────────────────────────────────────
+  geometry_msgs::msg::TwistStamped cmd_vel;
+  if (goalOrientationAlignment(current_state, pose, cmd_vel)) {
+    return cmd_vel;
+  }
   
-  // ── 4. goal 도달 여부 확인 ───────────────────────────────────────────────
+  // ── 5. goal 도달 여부 확인 ───────────────────────────────────────────────
   if (goal_checker) {
     const auto & goal_pose = global_plan_.poses.back();
     if (goal_checker->isGoalReached(
@@ -334,13 +357,12 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
     }
   }
 
-  // ── 5. 후진 모드 또는 제자리 회전 모드 ──────────────────────────────────────
-  geometry_msgs::msg::TwistStamped cmd_vel;
+  // ── 6. 후진 모드 또는 제자리 회전 모드 ──────────────────────────────────────
   if (orientationModes(current_state, pose, cmd_vel)) {
     return cmd_vel;
   }
 
-  // ── 6. 장애물 근접 or goal 접근 시 감속 ─────────────────────────────────────
+  // ── 7. 장애물 근접 or goal 접근 시 감속 ─────────────────────────────────────
   // if (current_footprint_cost >= slowdown_cost_thresh_) {
   //   current_v_ref_ *= slowdown_ratio_;
   // }
@@ -355,7 +377,7 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
     current_v_ref_ *= ratio;
   }
 
-  // ── 7. N 스텝 참조 궤적 생성 ──────────────────────────────────────────────
+  // ── 8. N 스텝 참조 궤적 생성 ──────────────────────────────────────────────
   std::vector<VehicleState> target_seq;
   try {
     target_seq = generateReferenceTrajectory(current_state);
@@ -367,21 +389,21 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
     return stop_cmd;
   }
 
-  // ── 8. NLopt 최적화 ────────────────────────────────────────────────────────
+  // ── 9. NLopt 최적화 ────────────────────────────────────────────────────────
   const std::vector<double> optimal_u = optimizeMPC(current_state, target_seq);
 
   // Receding Horizon: 첫 번째 스텝의 제어 입력만 실제로 인가
   const double delta_f = optimal_u[0];
   const double delta_r = optimal_u[1];
 
-  // ── 9. 워밍 스타트 갱신 ───────────────────────────────────────────────────
+  // ── 10. 워밍 스타트 갱신 ───────────────────────────────────────────────────
   for (size_t i = 0; i < u0_.size() - 2; ++i) {
     u0_[i] = optimal_u[i + 2];
   }
   u0_[u0_.size() - 2] = 0.0;
   u0_[u0_.size() - 1] = 0.0;
 
-  // ── 10. 최종 cmd_vel 계산 ─────────────────────────────────────────────────
+  // ── 11. 최종 cmd_vel 계산 ─────────────────────────────────────────────────
   const WheelAngles steer = computeWheelAngles(delta_f, delta_r);
   const WheelVelocities vel = computeWheelVelocities(delta_f, delta_r);
 
@@ -696,7 +718,7 @@ bool MpcUFRWSController::orientationModes(
 
     if (is_point_turning_) {
        // 제자리 회전 각속도 (+: CCW, -: CW)
-      double target_yaw_rate = (angle_diff > 0) ? 0.5 : -0.5;
+      double target_yaw_rate = (angle_diff > 0) ? goal_align_yaw_rate_ : -goal_align_yaw_rate_;
 
       // cmd_vel 계산
       cmd_vel.header.frame_id = pose.header.frame_id;
@@ -718,6 +740,71 @@ bool MpcUFRWSController::orientationModes(
   }
 
   return false;
+}
+
+// ── goal orientation 정렬 ─────────────────────────────────────────────────────────────
+bool MpcUFRWSController::goalOrientationAlignment(
+  const VehicleState & current_state,
+  const geometry_msgs::msg::PoseStamped & pose,
+  geometry_msgs::msg::TwistStamped & cmd_vel)
+{
+  if (!rotate_to_goal_heading_ || global_plan_.poses.empty()) {
+    return false;
+  }
+
+  // goal pose = global_plan의 마지막 pose
+  const auto & goal_pose = global_plan_.poses.back();
+
+  // goal까지의 xy 거리
+  const double dx = goal_pose.pose.position.x - current_state.x;
+  const double dy = goal_pose.pose.position.y - current_state.y;
+  const double dist_to_goal = std::hypot(dx, dy);
+
+  if (dist_to_goal > goal_xy_tolerance_) {
+    is_goal_aligning_ = false;
+    return false;
+  }
+
+  // goal pose의 yaw
+  const auto & gq = goal_pose.pose.orientation;
+  const double goal_yaw = std::atan2(
+    2.0 * (gq.w * gq.z + gq.x * gq.y),
+    1.0 - 2.0 * (gq.y * gq.y + gq.z * gq.z));
+
+  const double yaw_error = normalizeAngle(goal_yaw - current_state.theta);
+
+  // 명시적으로 yaw를 지정한 경우에만 동작
+  const double quat_norm_check = std::abs(gq.w - 1.0) + std::abs(gq.x) + std::abs(gq.y) + std::abs(gq.z);
+  if (quat_norm_check < 0.01) {
+    is_goal_aligning_ = false;
+    return false;
+  }
+
+  if (std::abs(yaw_error) < goal_yaw_tolerance_) {
+    if (is_goal_aligning_) {
+      RCLCPP_INFO(logger_, "Goal orientation aligned.");
+      is_goal_aligning_ = false;
+    }
+    return false;
+  }
+
+  // 제자리 회전 명령 발행
+  if (!is_goal_aligning_) {
+    is_goal_aligning_ = true;
+    RCLCPP_INFO(logger_, "Goal xy reached (dist=%.3f m). Aligning to goal heading: "
+      "current=%.1f deg, goal=%.1f deg, error=%.1f deg",
+      dist_to_goal, current_state.theta * 180.0 / M_PI, goal_yaw * 180.0 / M_PI, yaw_error * 180.0 / M_PI);
+  }
+
+  const double target_yaw_rate = (yaw_error > 0) ? goal_align_yaw_rate_ : - goal_align_yaw_rate_;
+
+  cmd_vel.header.frame_id = pose.header.frame_id;
+  cmd_vel.header.stamp    = clock_->now();
+  cmd_vel.twist.linear.x  = 0.0;
+  cmd_vel.twist.linear.y  = 0.0;
+  cmd_vel.twist.angular.z = target_yaw_rate;
+
+  return true;
 }
 
 // ── 조향각 계산 ─────────────────────────────────────────────────────────────

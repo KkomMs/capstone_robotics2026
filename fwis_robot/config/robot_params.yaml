@@ -24,50 +24,44 @@ defaults:
         steer_max_rpm: 65.0           # [rpm] 조향 모터 최대 rpm
 
     # ───────── Controller ─────────
-    #  - 로봇 이동 속도 제한
       common_ctrl: &common_ctrl
-        use_rate_limit: false         # true: 가속도 제한, false: step 스무딩
-        bound_cmd_speed: 0.15         # [m/s] step: 목표-현재 허용 오차 (선속도)
-        add_cmd_speed: 0.02           # [m/s] step 스무딩 tick당 증분 (선속도)
-        bound_cmd_ang_speed: 0.15     # [rad/s] step: 목표-현재 허용 오차 (각속도)
-        add_cmd_ang_speed: 0.05       # [rad/s] step 스무딩 tick당 증분 (각속도)
-        max_linear_accel: 0.6         # [m/s^2] 선가속도 상한
-        max_angular_accel: 1.5        # [rad/s^2] 각가속도 상한
-        deadzone_linear: 0.03         # [m/s] 이 값보다 작으면 0 처리
-        deadzone_angular: 0.03        # [rad/s] 이 값보다 작으면 0 처리
-        lpf_linear: 0.0               # 1차 LPF 계수(0.0 ~ 1.0) 0 = off
-        lpf_angular: 0.0              # 1차 LPF 계수 (0.0 ~ 1.0) 0 = off
-        limit_linear_abs: 0.7         # [m/s] 최종 선속도 절대 상한
-        limit_angular_abs: 1.5        # [rad/s] 최종 각속도 절대 상한
+        use_rate_limit: false
+        bound_cmd_speed: 0.15
+        add_cmd_speed: 0.02
+        bound_cmd_ang_speed: 0.15
+        add_cmd_ang_speed: 0.05
+        max_linear_accel: 0.6
+        max_angular_accel: 1.5
+        deadzone_linear: 0.03
+        deadzone_angular: 0.03
+        lpf_linear: 0.0
+        lpf_angular: 0.0
+        limit_linear_abs: 0.7
+        limit_angular_abs: 1.5
         deadband_threshold: 0.05      # 모터 피드백 Deadband 임계값
 
     # ───────── Motor Profile ─────────
     common_profile: &common_profile
-      control_rate: 50.0              # [Hz]
+      control_rate: 50.0
       publish_tf: false
 
-      # - 조향 모터 속도 프로파일
       steer_profile:
-        steer_max_velocity: 200.0           # [deg/s] 조향 최대 각속도
-        steer_max_accel: 600.0              # [deg/s^2] 조향 최대 각가속도
-        steer_position_tolerance: 1.5       # [deg] 조향 완료 판정 임계값
-      
-      # - 인휠 모터 속도 프로파일
+        steer_max_velocity: 200.0
+        steer_max_accel: 600.0
+        steer_position_tolerance: 1.5
+
       inwheel_profile:
-        inwheel_max_accel: 800.0              # [rpm/s] 목표 rpm 변경 시 가속 제한
-        inwheel_max_decel: 1200.0             # [rpm/s] 목표 rpm 변경 시 감속 제한
-        inwheel_min_rpm: 5.0                  # 이 값 이하의 목표 rpm 0으로 처리. 떨림 방지
-      
-      # - 두 모터 싱크
-      #   조향 우선, 조향 오차에 비례하여 부드럽게 구동
+        inwheel_max_accel: 800.0
+        inwheel_max_decel: 1200.0
+        inwheel_min_rpm: 5.0
+
       steer_inwheel_sync:
-        wait_for_steer: false              # true: 조향 완료 후 구동 시작 / flase: 조향과 동시에 구동
-        drive_scale_by_steer_err: true    # true: 조향 오차에 비례하여 인휠 모터 출력 스케일링
-        steer_err_full_drive: 2.0         # [deg] 이 오차 이하면 구동 모터 100%
-        steer_err_zero_drive: 10.0        # [deg] 이 오차 이상이면 구동 안함
-    
+        wait_for_steer: false
+        drive_scale_by_steer_err: true
+        steer_err_full_drive: 2.0
+        steer_err_zero_drive: 25.0
+
     # ───────── Camera Motor Serial ─────────
-    ##### [todo] 카메라 연결 후 다시 작성
     common_camera_serial: &common_camera_serial
       camera_serial:
         port: "/dev/ttyUSB0"
@@ -76,36 +70,202 @@ defaults:
         motor_ids:
           camera_left: 0
           camera_right: 1
-        min_angle_deg: -40.0            # [deg]
-        max_angle_deg: 180.0            # [deg]
-        publish_rate: 20.0              # [Hz]
-    
+        min_angle_deg: -40.0
+        max_angle_deg: 180.0
+        publish_rate: 20.0
+
     # ───────── IMU ─────────
     common_imu: &common_imu
       imu_port: "/dev/ttyIMU"
       imu_baudrate: 115200
       imu_frame_id: "imu_link"
-      sync_port: 1                      # 0: RS-232, 1: USB/UART
-      sync_period_ms: 20                # 50Hz
-      imu_publish_rate: 50.0            # [Hz]
+      sync_port: 1
+      sync_period_ms: 20
+      imu_publish_rate: 50.0
+
+    # ═══════════════════════════════════════════════════════════
+    # [추가] COMMON: ArUco 자세 정렬기 (C/D 모드 공통)
+    # ═══════════════════════════════════════════════════════════
+    common_aligner: &common_aligner
+
+      alignment_mode: "C"   # "C": 좌우 마커 1개씩 / "D": 좌우 마커 2개씩
+
+      # ── C 모드 ──────────────────────────────────────────────
+      ref_x:           -0.0265
+      ref_yaw_left:     0.0125
+      ref_yaw_right:   -0.0127
+      target_avg_dist:  0.6170
+      target_z_diff:   -0.0010
+      marker_id_left:  2
+      marker_id_right: 1
+
+      # ── D 모드 ──────────────────────────────────────────────
+      marker_id_d_l1: 4
+      marker_id_d_l2: 3
+      marker_id_d_r1: 2
+      marker_id_d_r2: 1
+      ref_yaw_d:            -0.017
+      ref_x_d_left:         -0.0652
+      ref_x_d_right:        -0.0297
+      target_avg_dist_d:     0.6203
+      target_z_diff_d_left:  -0.0188
+      target_z_diff_d_right: -0.0017
+
+      # ── PID 게인 ────────────────────────────────────────────
+      kp_w:    3.0
+      kp_x:    0.2
+      kp_y:    0.2
+      kp_diff: 0.2
+
+      # ── 속도 한계 ────────────────────────────────────────────
+      max_w:  0.10
+      min_w:  0.05
+      max_vx: 0.14
+      min_vx: 0.10
+      max_vy: 0.14
+      min_vy: 0.10
+
+      # ── 수렴 임계값 ──────────────────────────────────────────
+      thr_yaw:         0.018
+      thr_center:      0.015
+      thr_dist:        0.015
+      thr_diff:        0.015
+      required_stable: 3
+
+      # ── 페이즈 전환 ──────────────────────────────────────────
+      thr_yaw_enter_x:       0.015
+      thr_yaw_back_to_yaw:   0.030
+      yaw_ok_required_count: 3
+      x_phase_min_hold_time: 0.7
+
+      # ── YAW 브레이크 ─────────────────────────────────────────
+      yaw_brake_band:            0.03
+      yaw_brake_max_w:           0.05
+      yaw_settle_time:           0.20
+      yaw_settle_required_count: 2
+
+      # ── 마커 필터 ────────────────────────────────────────────
+      marker_timeout: 1.5
+      lpf_alpha:      0.5
+      outlier_thr:    0.5
+
+      # ── 부호 설정 ────────────────────────────────────────────
+      sign_yaw:  -1.0
+      sign_x:    +1.0
+      sign_dist: -1.0
+      sign_diff: +1.0
+
+      # ── 스티어 동기화 ────────────────────────────────────────
+      steer_position_tolerance: 5.0
+
+      # ── 내부 모터 제어용 기구학 ──────────────────────────────
+      wheel_radius:     0.0695
+      wheel_x_offset:   0.215
+      wheel_y_offset:   0.215
+      wheel_max_rpm:    560.0
+      deadzone_linear:  0.005
+      deadzone_angular: 0.005
+      steer_max_velocity:  200.0
+      steer_max_accel:     600.0
+      inwheel_max_accel:   800.0
+      inwheel_max_decel:  1200.0
+      inwheel_min_rpm:     5.0
+
+    # ═══════════════════════════════════════════════════════════
+    # [추가] COMMON: 다이나믹셀 스캔 모터
+    # ═══════════════════════════════════════════════════════════
+    common_dynamixel: &common_dynamixel
+
+      dxl_device:   "/dev/ttyUSBDynamixel"
+      dxl_baudrate: 57600
+
+      dxl_left_id:  6
+      dxl_right_id: 7
+
+      dxl_left_start:  330
+      dxl_left_p1_end: -600
+      dxl_left_p2_end: -870
+      dxl_left_end:    -980
+
+      dxl_right_start:  1470
+      dxl_right_p1_end:  480
+      dxl_right_p2_end:  270
+      dxl_right_end:     140
+
+      dxl_left_vel_p1:     2
+      dxl_left_vel_p2:     1
+      dxl_left_vel_step:   1
+      dxl_left_vel_return: 10
+
+      dxl_right_vel_p1:     4
+      dxl_right_vel_p2:     1
+      dxl_right_vel_step:   1
+      dxl_right_vel_return: 10
+
+      dxl_left_p2_step:  10
+      dxl_left_p3_step:   3
+      dxl_right_p2_step: 20
+      dxl_right_p3_step:  5
+
+      dxl_left_p2_is_sweep:  false
+      dxl_right_p2_is_sweep: false
+
+      dxl_arrive_threshold: 20
+      dxl_step_timeout_ms: 3000
+      dxl_control_period_ms: 100
+      alignment_done_delay_sec: 2.0
+
+      total_slots: 51
+      empty_slots: [9, 11, 14, 30, 39, 50]
 
 # ─────────────────────────────────────────────────────────────────────────────
-# mobile_robot_node (메인 제어 노드)
+# mobile_robot_node
 # ─────────────────────────────────────────────────────────────────────────────
 mobile_robot_node:
   ros__parameters:
     <<: [*common_frames, *common_geom, *common_ctrl, *common_profile]
 
 # ─────────────────────────────────────────────────────────────────────────────
-# camera_node (카메라 모터 노드)
+# camera_node
 # ─────────────────────────────────────────────────────────────────────────────
 camera_node:
   ros__parameters:
     <<: [*common_camera_serial]
 
 # ─────────────────────────────────────────────────────────────────────────────
-# imu_node (IMU 센서 노드)
+# imu_node
 # ─────────────────────────────────────────────────────────────────────────────
 imu_node:
   ros__parameters:
-    <<: [*common_imu]
+    <<: *common_imu
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [추가] aruco_aligner_node
+# ─────────────────────────────────────────────────────────────────────────────
+aruco_aligner_node:
+  ros__parameters:
+    <<: *common_aligner
+    marker_sequence_d_l1: [4,  8,  12]
+    marker_sequence_d_l2: [3,  7,  11]
+    marker_sequence_d_r1: [2,  6,  10]
+    marker_sequence_d_r2: [1,  5,   9]
+    marker_sequence_left:  [2, 4, 6, 8, 10]
+    marker_sequence_right: [1, 3, 5, 7, 9]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [추가] zebra_scanner_node
+# ─────────────────────────────────────────────────────────────────────────────
+zebra_scanner_node:
+  ros__parameters:
+    scanner_id_left:  1
+    scanner_id_right: 2
+    calibration_file: "/home/hmh/capstone_robot/config/camera_calibration.xml"
+    marker_size:      0.04
+    aruco_dict_id:    10
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [추가] dynamixel_scan_node
+# ─────────────────────────────────────────────────────────────────────────────
+dynamixel_scan_node:
+  ros__parameters:
+    <<: *common_dynamixel

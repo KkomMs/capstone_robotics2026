@@ -232,6 +232,13 @@ protected:
   bool is_point_turning_;     ///< 제자리 회전 여부
   double current_v_ref_;      ///< 현재 적용할 동적 속도 [m/s]
 
+  // ── Goal orientation alignment ────────────────────────────────────────────
+  bool    rotate_to_goal_heading_;    ///< goal heading 정렬 활성화 여부
+  bool    is_goal_aligning_;          ///< 현재 goal heading 정렬 중인지
+  double  goal_xy_tolerance_;         ///< goal xy 도달 판정 거리 [m]
+  double  goal_yaw_tolerance_;        ///< goal yaw 정렬 완료 판정 각도 [rad]
+  double  goal_align_yaw_rate_;       ///< goal heading 정렬 시 회전 각속도 [rad/s]
+
   // ── Goal 도달 판정 ──────────────────────────────────────────────────────────
   double goal_dist_tol_{0.25};  ///< xy tolerance [m]
   
@@ -274,6 +281,13 @@ protected:
     const VehicleState current_state,
     const geometry_msgs::msg::PoseStamped & pose,
     geometry_msgs::msg::TwistStamped & cmd_vel);
+  
+  // goal heading angle 정렬
+  bool goalOrientationAlignment(
+    const VehicleState & current_state,
+    const geometry_msgs::msg::PoseStamped & pose,
+    geometry_msgs::msg::TwistStamped & cmd_vel);
+  
 };
 
 }  // namespace mpc_ufrws_controller
