@@ -230,6 +230,9 @@ def main():
             if bridge.aruco_detected.is_set():
                 print('[Mission] ★ 마커 감지! → cancel 후 정렬/스캔 시작')
 
+                # [수정] nav2 cancel 전 먼저 mobile_robot_node pause
+                bridge.publish_pause(True)
+
                 feedback = navigator.getFeedback()
                 if feedback is not None:
                     next_idx = next_idx + int(feedback.current_waypoint)
