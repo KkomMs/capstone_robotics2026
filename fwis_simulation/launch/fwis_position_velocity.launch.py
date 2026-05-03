@@ -55,7 +55,7 @@ def generate_launch_description():
         package='robot_state_publisher',
         executable='robot_state_publisher',
         output='screen',
-        parameters=[robot_description]
+        parameters=[robot_description, {'use_sim_time': use_sim_time}],
     )
 
     gz_spawn_entity = Node(
@@ -64,10 +64,10 @@ def generate_launch_description():
         output='screen',
         arguments=['-topic', 'robot_description',
                    '-name', 'fwis',
-                   '-x', '3.6',
-                   '-y', '3.3',
+                   '-x', '-3.4',
+                   '-y', '3.15',
                    '-z', '0.2',
-                   '-Y', '-1.5708',
+                   '-Y', '0.0',
                    '-allow_renaming', 'true'],
     )
 
@@ -106,7 +106,7 @@ def generate_launch_description():
     odom_node = Node(
         package='fwis_simulation',
         executable='odom_publisher.py',
-        output='screen'
+        output='screen',
     )
     rviz_node = Node(
         package='rviz2',
