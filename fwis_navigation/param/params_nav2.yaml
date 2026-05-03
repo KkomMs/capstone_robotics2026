@@ -136,7 +136,8 @@ controller_server:
     FollowPath:
       plugin: "mpc_ufrws_controller::MpcUFRWSController"
       # ── MPC 파라미터 ───────────────────────────
-      desired_linear_vel: 0.2
+      desired_linear_vel: 0.23
+      desired_angular_vel: 0.45
       lookahead_dist: 0.3
       control_period: 0.02         # 50 [Hz]
       prediction_horizon: 10       # 예측 구간
@@ -156,16 +157,11 @@ controller_server:
       opt_ftol_rel: 1.0e-6        # 비용 함수 상대 수렴 허용치
       opt_xtol_rel: 1.0e-6        # 변수 상대 수렴 허용치
       opt_grad_eps: 1.0e-5        # 유한 차분 스텝 크기
-      # ── goal orientation 정렬 ────────────────
-      rotate_to_goal_heading: false  # heading 정렬 사용 여부
-      goal_xy_tolerance: 0.2        # goal xy 도달 판정 거리 [m]
-      goal_yaw_tolerance: 0.2       # heading 정렬 완료 판정 각도 [rad]
-      goal_align_yaw_rate: 0.5      # heading 정렬 시 회전 각속도 [rad/s]
-      # ── 장애물 회피 ────────────────────────────
-      Q_obs: 1000.0               # 장애물 비용 가중치. 값이 클수록 강하게 회피
-      critical_cost_thresh: 0.9   # 긴급 정지 임계값(0.0 ~ 1.0)
-      slowdown_cost_thresh: 0.5   # 감속 시작 임계값(0.0 ~ 1.0)
-      slowdown_ratio: 0.3         # 감속 시 속도 비율 [%]
+      # ── 장애물 회피 파라미터 ────────────────────────────
+      Q_obs_critical: 1000.0          # 충돌 임박 영역 가중치
+      Q_obs_repulsion: 40.0           # inflation 영역 반발 가중치
+      use_footprint_collision: true   # footprint 기반 충돌 검사 사용 유무
+      slowdown_ratio: 0.6             # 감속 비율
       # ── TF ───────────────────────────────────
       transform_tolerance: 0.1
 
