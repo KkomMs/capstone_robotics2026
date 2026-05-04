@@ -22,7 +22,7 @@ namespace mpc_ufrws_controller
 
 // ── 데이터 구조체 ──────────────────────────────────────────────────────────────
 /**
- * @brief 차량 상태 벡터: 전역 좌표계 기준 [X, Y, theta(yaw)]
+ * @brief 차량 상태 벡터: costmap frame(odom) 기준 [X, Y, theta(yaw)]
  */
 struct VehicleState
 {
@@ -124,53 +124,35 @@ protected:
   };
 
   // ── UFRWS 기구학 모델 ───────────────────────────────────────────────────────
-  /**
-   * @brief UFRWS 기구학 모델
-   */
   VehicleState ufrwsModel(
     const VehicleState & state,
     double delta_f,
     double delta_r) const;
 
   // ── MPC 비용 함수 ───────────────────────────────────────────────────────────
-  /**
-   * @brief MPC 비용 함수
-   *
-   * @param u_seq        제어 시퀀스
-   * @param current_state 현재 차량 상태
-   * @param target_seq   N 스텝 참조 상태 시퀀스
-   * @return 총 비용값
-   */
   double mpcCost(
     const std::vector<double> & u_seq,
     const VehicleState & current_state,
     const std::vector<VehicleState> & target_seq) const;
 
   // ── NLopt MPC 최적화 ────────────────────────────────────────────────────────
-  /**
-   * @brief NLopt LD_SLSQP 기반 MPC 최적화
-   *
-   * @param current_state 현재 상태
-   * @param target_seq    N 스텝 참조 시퀀스
-   * @return 최적 제어 시퀀스
-   */
   std::vector<double> optimizeMPC(
     const VehicleState & current_state,
     const std::vector<VehicleState> & target_seq);
 
   // ── 참조 궤적 생성 ──────────────────────────────────────────────────────────
   /**
-   * @brief 전역 경로에서 N 스텝 참조 상태 시퀀스 생성
+   * @brief map -> odom 변환된 프레임에서 N 스텝 참조 상태 시퀀스 생성
    */
   std::vector<VehicleState> generateReferenceTrajectory(
-    const VehicleState & current_state);
+    const VehicleState & current_state,
+    std::vector<geometry_msgs::msg::PoseStamped> & plan_poses);
+  
+  // ── 경로 프레임 변환 (map->odom) ──────────────────────────────────────────────
+  nav_msgs::msg::Path transformGlobalPlan(
+    const geometry_msgs::msg::PoseStamped & robot_pose);
 
   // ── 조향각 및 바퀴 속도 계산 ────────────────────────────────────────────────────
-  /**
-   * @brief 전/후륜 조향각 및 바퀴 속도 계산, 제자리 회전 속도 계산
-   *
-   * UFRWS 모델의 개별 조향각 및 ICR 개념을 이용한 바퀴 속도 계산
-   */
   WheelAngles computeWheelAngles(double delta_f, double delta_r) const;
   WheelVelocities computeWheelVelocities(double delta_f, double delta_r) const;
   /**
@@ -189,14 +171,11 @@ protected:
     const rclcpp::Duration & transform_tolerance) const;
 
   // ── 장애물 회피 ─────────────────────────────────────────────────────────────
-  /**
-   * @brief 전역 좌표에서의 costmap 비용을 0.0 ~ 1.0 정규화값으로 반환
-   */
   double costmapCost(double wx, double wy) const;
-  /**
-   * @brief 로봇 footprint 코너 4개에 대한 costmap 비용의 최댓값 반환
-   */
   double footprintCostmapCost(const VehicleState & state) const;
+  bool isTrajectoryCollisionFree(
+    const std::vector<double> & u_seq,
+    const VehicleState & current_state) const;
   
   // ── 유틸 ──────────────────────────────────────────────────────────────────
   static double normalizeAngle(double angle);
@@ -206,9 +185,9 @@ protected:
   std::shared_ptr<tf2_ros::Buffer> tf_;
   std::string plugin_name_;
   std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_ros_;
+  nav2_costmap_2d::Costmap2D * costmap_{nullptr};
   rclcpp::Logger logger_{rclcpp::get_logger("MpcUFRWSController")};
   rclcpp::Clock::SharedPtr clock_;
-
   std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Path>> global_pub_;
 
   // ── 차량 파라미터 ────────────────────────────────────────────────────────────
@@ -220,6 +199,7 @@ protected:
 
   // ── MPC 파라미터 ─────────────────────────────────────────────────────────────
   double V_ref_;            ///< 목표 주행 속도 [m/s]
+  double desired_angular_vel_;  ///< 목표 회전 속도 [rad/s]
   double lookahead_dist_;   ///< 예측 구간 총 거리 [m]
   double dt_;               ///< 제어 주기 [s]
   int    N_;                ///< 예측 구간 스텝 수
@@ -231,16 +211,6 @@ protected:
   bool is_reversing_;         ///< 후진 여부
   bool is_point_turning_;     ///< 제자리 회전 여부
   double current_v_ref_;      ///< 현재 적용할 동적 속도 [m/s]
-
-  // ── Goal orientation alignment ────────────────────────────────────────────
-  bool    rotate_to_goal_heading_;    ///< goal heading 정렬 활성화 여부
-  bool    is_goal_aligning_;          ///< 현재 goal heading 정렬 중인지
-  double  goal_xy_tolerance_;         ///< goal xy 도달 판정 거리 [m]
-  double  goal_yaw_tolerance_;        ///< goal yaw 정렬 완료 판정 각도 [rad]
-  double  goal_align_yaw_rate_;       ///< goal heading 정렬 시 회전 각속도 [rad/s]
-
-  // ── Goal 도달 판정 ──────────────────────────────────────────────────────────
-  double goal_dist_tol_{0.25};  ///< xy tolerance [m]
   
   // ── 비용 함수 가중치 ─────────────────────────────────────────────────────────
   double Q_y_;     ///< 횡방향 오차 가중치
@@ -258,13 +228,10 @@ protected:
   double opt_grad_eps_;   ///< 수치 기울기 유한 차분 스텝 크기
 
   // ── 장애물 회피  ─────────────────────────────────────────────────────────────
-  double Q_obs_;                 ///< 장애물 비용 가중치
-  double critical_cost_thresh_;  ///< 긴급 정지 임계값
-  double slowdown_cost_thresh_;  ///< 감속 시작 임계값
-  double slowdown_ratio_;        ///< 감속 시 속도 비율
-
-  // ── costmap 캐시  ───────────────────────────────────────────────────────────
-  nav2_costmap_2d::Costmap2D * costmap_{nullptr};
+  double Q_obs_critical_;           ///< 충돌 임박 영역 가중치
+  double Q_obs_repulsion_;          ///< inflation 영역 반발 가중치
+  bool   use_footprint_collision_;  ///< footprint 기반 충돌 검사 사용 여부
+  double slowdown_ratio_;           ///< 감속 비율 [%]
 
   // ── 워밍 스타트 ──────────────────────────────────────────────────────────────
   std::vector<double> u0_;  ///< 이전 최적해 (다음 주기 초기값)
@@ -278,13 +245,6 @@ protected:
 
   // ── 모드 처리 함수 ─────────────────────────────────────────────────────────────
   bool orientationModes(
-    const VehicleState current_state,
-    const geometry_msgs::msg::PoseStamped & pose,
-    geometry_msgs::msg::TwistStamped & cmd_vel);
-  
-  // goal heading angle 정렬
-  bool goalOrientationAlignment(
-    const VehicleState & current_state,
     const geometry_msgs::msg::PoseStamped & pose,
     geometry_msgs::msg::TwistStamped & cmd_vel);
   
