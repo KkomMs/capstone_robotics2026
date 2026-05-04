@@ -30,6 +30,7 @@ from geometry_msgs.msg import PoseStamped, Quaternion
 from std_msgs.msg import Bool
 from rclpy.qos import QoSProfile, DurabilityPolicy
 
+# from geometry_msgs.msg import PoseStamped, Quaternion, PoseWithCovarianceStamped
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  유틸
@@ -75,6 +76,10 @@ class MissionBridge(Node):
         # ── Publishers ─────────────────────────────────────────────────────
         self.pause_pub = self.create_publisher(Bool, '/mobile_robot_pause', qos)
 
+        # self.initialpose_pub = self.create_publisher(PoseWithCovarianceStamped, '/initialpose', 10)
+        # self.create_subscription(PoseWithCovarianceStamped, '/amcl_pose', self._on_amcl_pose, 10)
+        # self.current_pose = None
+
         # ── Subscribers ────────────────────────────────────────────────────
         self.create_subscription(
             Bool, '/aruco_detected', self._on_aruco, qos)
@@ -94,6 +99,20 @@ class MissionBridge(Node):
         self._aruco_cooldown  = 5.0  # [s]
 
     # ── 콜백 ───────────────────────────────────────────────────────────────
+
+    # def _on_amcl_pose(self, msg: PoseWithCovarianceStamped):
+    #     self.current_pose = msg.pose.pose
+
+    # def publish_initialpose(self, pose):
+    #     msg = PoseWithCovarianceStamped()
+    #     msg.header.frame_id = 'map'
+    #     msg.header.stamp = self.get_clock().now().to_msg()
+    #     msg.pose.pose = pose
+    #     msg.pose.covariance[0]  = 0.25
+    #     msg.pose.covariance[7]  = 0.25
+    #     msg.pose.covariance[35] = 0.1
+    #     self.initialpose_pub.publish(msg)
+
 
     def _on_aruco(self, msg: Bool):
         if not msg.data:
@@ -230,8 +249,14 @@ def main():
             if bridge.aruco_detected.is_set():
                 print('[Mission] ★ 마커 감지! → cancel 후 정렬/스캔 시작')
 
+                # saved_pose = bridge.current_pose
+
                 # [수정] nav2 cancel 전 먼저 mobile_robot_node pause
                 bridge.publish_pause(True)
+
+                # if saved_pose is not None:             
+                #     bridge.publish_initialpose(saved_pose)  
+                #     time.sleep(1.0) 
 
                 feedback = navigator.getFeedback()
                 if feedback is not None:
@@ -264,6 +289,12 @@ def main():
         else:
             if bridge.aruco_detected.is_set():
                 print('[Mission] ★ (else) 마커 감지! → 정렬/스캔 시작')
+
+                # saved_pose = bridge.current_pose
+                # if saved_pose is not None:             
+                #     bridge.publish_initialpose(saved_pose)  
+                #     time.sleep(1.0) 
+
                 navigator.cancelTask()
                 while not navigator.isTaskComplete():
                     time.sleep(0.05)
@@ -271,7 +302,9 @@ def main():
                 bridge.wait_for_alignment()
                 print('[Mission] 스캔 완료 대기 중...')
                 bridge.wait_for_scan()
+
                 bridge.publish_pause(False)
+                continue
             # isTaskComplete() 가 True 가 된 경우 (마커 감지 없이 정상 완료)
             result = navigator.getResult()
 

@@ -412,18 +412,18 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   }
 
   // ── 6. 장애물 회피를 위한 속도 조절 ────────────────────────────────────────────
-  double max_cost_ahead = 0.0;
-  for (const auto & target_state : target_seq) {
-    double cost = use_footprint_collision_ ? footprintCostmapCost(target_state) : costmapCost(target_state.x, target_state.y);
-    max_cost_ahead = std::max(max_cost_ahead, cost);
-  }
+  // double max_cost_ahead = 0.0;
+  // for (const auto & target_state : target_seq) {
+  //   double cost = use_footprint_collision_ ? footprintCostmapCost(target_state) : costmapCost(target_state.x, target_state.y);
+  //   max_cost_ahead = std::max(max_cost_ahead, cost);
+  // }
 
-  if (max_cost_ahead >= 0.9) {
-    current_v_ref_ = 0.0;     // 충돌 위험 시 정지
-  } else if (max_cost_ahead > 0.2) {    // 거리에 비례하여 감속
-    double penalty_ratio = (max_cost_ahead - 0.2) / 0.6;
-    current_v_ref_ = current_v_ref_ * (1.0 - penalty_ratio * (1.0 - slowdown_ratio_));
-  }
+  // if (max_cost_ahead >= 0.9) {
+  //   current_v_ref_ = 0.0;     // 충돌 위험 시 정지
+  // } else if (max_cost_ahead > 0.2) {    // 거리에 비례하여 감속
+  //   double penalty_ratio = (max_cost_ahead - 0.2) / 0.6;
+  //   current_v_ref_ = current_v_ref_ * (1.0 - penalty_ratio * (1.0 - slowdown_ratio_));
+  // }
 
   // ── 7. NLopt 최적화 ────────────────────────────────────────────────────────
   const std::vector<double> optimal_u = optimizeMPC(current_state, target_seq);
@@ -605,13 +605,13 @@ double MpcUFRWSController::mpcCost(
     prev_dr = delta_r;
 
     // costmap 기반 장애물 비용
-    if ((Q_obs_critical_ > 0.0 || Q_obs_repulsion_ > 0.0) && costmap_) {
-      if (max_cost >= 0.8) {
-        cost += Q_obs_critical_ * max_cost * max_cost;
-      } else if (max_cost > 0.0) {
-        cost += Q_obs_repulsion_ * max_cost * max_cost;
-      }
-    }
+    // if ((Q_obs_critical_ > 0.0 || Q_obs_repulsion_ > 0.0) && costmap_) {
+    //   if (max_cost >= 0.8) {
+    //     cost += Q_obs_critical_ * max_cost * max_cost;
+    //   } else if (max_cost > 0.0) {
+    //     cost += Q_obs_repulsion_ * max_cost * max_cost;
+    //   }
+    // }
   }
   return cost;
 }

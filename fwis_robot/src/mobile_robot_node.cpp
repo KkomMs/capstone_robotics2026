@@ -335,18 +335,16 @@ private:
                     zero[i].wheel_vel    = 0.0;
                 }
                 PublishWheelCommands(zero);
-
-                for (int i = 0; i < 4; i++) {
-                    vel_history_[i].clear();
-                    filtered_vel_[i] = 0.0;
-                    current_states_[i].wheel_vel = 0.0;
-                }
-
                 stop_sent_ = true;
             }
-            const auto& pose = kinematics_.GetPose();
-            PublishOdom(pose, now);
-            if (publish_tf_) PublishTF(pose, now);
+
+            // pose는 그대로 유지하되 twist만 0으로
+            Pose stopped_pose = kinematics_.GetPose();
+            stopped_pose.vx = 0.0;
+            stopped_pose.vy = 0.0;
+            stopped_pose.wz = 0.0;
+            PublishOdom(stopped_pose, now);
+            if (publish_tf_) PublishTF(stopped_pose, now);
             return;
         }
         stop_sent_ = false;
