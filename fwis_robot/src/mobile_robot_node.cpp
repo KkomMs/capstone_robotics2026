@@ -335,6 +335,13 @@ private:
                     zero[i].wheel_vel    = 0.0;
                 }
                 PublishWheelCommands(zero);
+
+                for (int i = 0; i < 4; i++) {
+                    vel_history_[i].clear();
+                    filtered_vel_[i] = 0.0;
+                    current_states_[i].wheel_vel = 0.0;
+                }
+
                 stop_sent_ = true;
             }
             const auto& pose = kinematics_.GetPose();

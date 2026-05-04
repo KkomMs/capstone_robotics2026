@@ -91,11 +91,11 @@ defaults:
       alignment_mode: "C"   # "C": 좌우 마커 1개씩 / "D": 좌우 마커 2개씩
 
       # ── C 모드 ──────────────────────────────────────────────
-      ref_x:           -0.0265
-      ref_yaw_left:     0.0125
-      ref_yaw_right:   -0.0127
-      target_avg_dist:  0.6170
-      target_z_diff:   -0.0010
+      ref_x:           -0.028
+      ref_yaw_left:     0.010
+      ref_yaw_right:   -0.005
+      target_avg_dist:  0.606
+      target_z_diff:    0.018
       marker_id_left:  2
       marker_id_right: 1
 
@@ -176,34 +176,39 @@ defaults:
     # ═══════════════════════════════════════════════════════════
     common_dynamixel: &common_dynamixel
 
-      dxl_device:   "/dev/ttyUSBDynamixel"
+      dxl_device:   "/dev/ttyDynamixel"
       dxl_baudrate: 57600
 
       dxl_left_id:  6
       dxl_right_id: 7
 
+      dxl_left_scanner_id:  1    # ← 추가
+      dxl_right_scanner_id: 2    # ← 추가
+
       dxl_left_start:  330
-      dxl_left_p1_end: -600
+      dxl_left_p0_end: 210       # ← 추가
+      dxl_left_p1_end: -610      # ← 추가 (기존 dxl_left_p1_end 없으면 추가)
       dxl_left_p2_end: -870
       dxl_left_end:    -980
 
       dxl_right_start:  1470
-      dxl_right_p1_end:  480
+      dxl_right_p0_end: 1350     # ← 추가
+      dxl_right_p1_end:  530     # ← 추가
       dxl_right_p2_end:  270
       dxl_right_end:     140
 
       dxl_left_vel_p1:     2
-      dxl_left_vel_p2:     1
-      dxl_left_vel_step:   1
+      dxl_left_vel_step:   1     # ← 추가
       dxl_left_vel_return: 10
 
       dxl_right_vel_p1:     4
-      dxl_right_vel_p2:     1
-      dxl_right_vel_step:   1
+      dxl_right_vel_step:   1    # ← 추가
       dxl_right_vel_return: 10
 
+      dxl_left_p0_step:  40      # ← 추가
       dxl_left_p2_step:  10
       dxl_left_p3_step:   3
+      dxl_right_p0_step: 40      # ← 추가
       dxl_right_p2_step: 20
       dxl_right_p3_step:  5
 
