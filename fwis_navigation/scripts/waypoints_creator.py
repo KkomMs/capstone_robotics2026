@@ -173,6 +173,10 @@ def main():
     navigator = BasicNavigator()
     bridge    = MissionBridge()
 
+    # nav2 준비 대기
+    navigator.waitUntilNav2Active()
+    time.sleep(1.0)
+
     # BasicNavigator + MissionBridge 를 멀티스레드로 동시에 spin
     executor = MultiThreadedExecutor()
     executor.add_node(navigator)
@@ -182,10 +186,6 @@ def main():
     spin_thread = threading.Thread(target=executor.spin, daemon=True)
     spin_thread.start()
 
-    # nav2 준비 대기
-    navigator.waitUntilNav2Active()
-
-    time.sleep(1.0)
     bridge.reset_flags()
 
     # ── 전체 waypoint 리스트 ────────────────────────────────────────────────
@@ -229,6 +229,9 @@ def main():
             # 마커 감지 여부 체크 (non-blocking)
             if bridge.aruco_detected.is_set():
                 print('[Mission] ★ 마커 감지! → cancel 후 정렬/스캔 시작')
+
+                # [수정] nav2 cancel 전 먼저 mobile_robot_node pause
+                bridge.publish_pause(True)
 
                 feedback = navigator.getFeedback()
                 if feedback is not None:
