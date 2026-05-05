@@ -42,13 +42,13 @@ double MpcUFRWSController::nloptObjectiveCb(
 
   // 기울기가 필요할 때만 유한 차분 계산
   if (!grad.empty()) {
-    std::vector<double> u_plus = u;           // 한 번만 복사, 이후 원소별 교란
+    std::vector<double> u_plus = u;
     const double eps = d->eps;
 
     for (size_t i = 0; i < u.size(); ++i) {
       u_plus[i] += eps;
       grad[i] = (d->controller->mpcCost(u_plus, *d->current_state, *d->target_seq) - cost) / eps;
-      u_plus[i] = u[i];                       // 원상 복구
+      u_plus[i] = u[i];
     }
   }
 
@@ -384,8 +384,6 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
     {
       if (goal_checker->isGoalReached(pose.pose, goal_pose_odom.pose, velocity))
       {
-        RCLCPP_INFO_THROTTLE(logger_, *clock_, 2000,
-          "Goal reached. Sending zero velocity.");
         geometry_msgs::msg::TwistStamped stop_cmd;
         stop_cmd.header.frame_id = pose.header.frame_id;
         stop_cmd.header.stamp    = clock_->now();
@@ -414,18 +412,18 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   }
 
   // ── 6. 장애물 회피를 위한 속도 조절 ────────────────────────────────────────────
-  double max_cost_ahead = 0.0;
-  for (const auto & target_state : target_seq) {
-    double cost = use_footprint_collision_ ? footprintCostmapCost(target_state) : costmapCost(target_state.x, target_state.y);
-    max_cost_ahead = std::max(max_cost_ahead, cost);
-  }
+  // double max_cost_ahead = 0.0;
+  // for (const auto & target_state : target_seq) {
+  //   double cost = use_footprint_collision_ ? footprintCostmapCost(target_state) : costmapCost(target_state.x, target_state.y);
+  //   max_cost_ahead = std::max(max_cost_ahead, cost);
+  // }
 
-  if (max_cost_ahead >= 0.9) {
-    current_v_ref_ = 0.0;     // 충돌 위험 시 정지
-  } else if (max_cost_ahead > 0.2) {    // 거리에 비례하여 감속
-    double penalty_ratio = (max_cost_ahead - 0.2) / 0.6;
-    current_v_ref_ = current_v_ref_ * (1.0 - penalty_ratio * (1.0 - slowdown_ratio_));
-  }
+  // if (max_cost_ahead >= 0.9) {
+  //   current_v_ref_ = 0.0;     // 충돌 위험 시 정지
+  // } else if (max_cost_ahead > 0.2) {    // 거리에 비례하여 감속
+  //   double penalty_ratio = (max_cost_ahead - 0.2) / 0.6;
+  //   current_v_ref_ = current_v_ref_ * (1.0 - penalty_ratio * (1.0 - slowdown_ratio_));
+  // }
   
   // ── 7. NLopt 최적화 ────────────────────────────────────────────────────────
   const std::vector<double> optimal_u = optimizeMPC(current_state, target_seq);
@@ -590,7 +588,8 @@ double MpcUFRWSController::mpcCost(
     }
 
     // 상태 비용
-    cost += dynamic_Q_y  * e_y   * e_y;
+    //cost += dynamic_Q_y  * e_y   * e_y;
+    cost += Q_y_ * e_y * e_y;
     cost += Q_phi_ * e_phi * e_phi;
 
     // 제어량 크기 비용 (조향각이 불필요하게 커지는 것 억제)
@@ -605,13 +604,13 @@ double MpcUFRWSController::mpcCost(
     prev_dr = delta_r;
     
     // 장애물 비용
-    if ((Q_obs_critical_ > 0.0 || Q_obs_repulsion_ > 0.0) && costmap_) {
-      if (max_cost >= 0.8) {
-        cost += Q_obs_critical_ * max_cost * max_cost;
-      } else if (max_cost > 0.0) {
-        cost += Q_obs_repulsion_ * max_cost * max_cost;
-      }
-    }
+    // if ((Q_obs_critical_ > 0.0 || Q_obs_repulsion_ > 0.0) && costmap_) {
+    //   if (max_cost >= 0.8) {
+    //     cost += Q_obs_critical_ * max_cost * max_cost;
+    //   } else if (max_cost > 0.0) {
+    //     cost += Q_obs_repulsion_ * max_cost * max_cost;
+    //   }
+    // }
   }
 
   return cost;
@@ -756,10 +755,6 @@ std::vector<VehicleState> MpcUFRWSController::generateReferenceTrajectory(
       ref.theta = normalizeAngle(ref.theta + M_PI);
     }
 
-    // crab walking 테스트하려면 아래 주석 해제하고 ref.theta = 0 으로 지정 
-    // (heading angle 항상 정면으로 고정)
-    // ref.theta = 0;
-
     ref_seq.push_back(ref);
   }
 
@@ -797,12 +792,15 @@ bool MpcUFRWSController::orientationModes(
   // 로봇의 현재 heading과 경로 방향의 오차 계산
   double angle_diff = normalizeAngle(path_angle - robot_yaw);
 
+  double turn_thres = 45.0;     // 제자리 회전 오차 임계값 [deg]
+  double align_complete = 5.0;  // 제자리 회전 완료 임계값 [deg]
+
   // 1. 제자리 회전 모드
   if (point_turning_mode_) {
-    if (!is_point_turning_ && std::abs(angle_diff) > M_PI_4) {  // 45deg 이상 오차
+    if (!is_point_turning_ && std::abs(angle_diff) > (turn_thres * M_PI / 180.0)) {
       is_point_turning_ = true;
       RCLCPP_INFO(logger_, "Heading angle error: %.1f deg. Start point turn.", angle_diff * 180.0 / M_PI);
-    } else if (is_point_turning_ && std::abs(angle_diff) < 0.08) {  // 약 5도 이내 오차
+    } else if (is_point_turning_ && std::abs(angle_diff) < (align_complete * M_PI / 180.0)) {
       is_point_turning_ = false;
       RCLCPP_INFO(logger_, "Align completed.");
     }
@@ -863,7 +861,6 @@ WheelAngles MpcUFRWSController::computeWheelAngles(double delta_f, double delta_
 }
 
 // ── 4WS 모델의 ICR을 이용한 개별 바퀴 속도 ────────────────────────────────────────
-
 WheelVelocities MpcUFRWSController::computeWheelVelocities(double delta_f, double delta_r) const
 {
   const double tan_df = std::tan(delta_f);

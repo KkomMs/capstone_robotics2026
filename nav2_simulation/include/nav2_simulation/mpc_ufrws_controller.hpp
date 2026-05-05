@@ -21,7 +21,6 @@ namespace mpc_ufrws_controller
 {
 
 // ── 데이터 구조체 ──────────────────────────────────────────────────────────────
-
 /**
  * @brief 차량 상태 벡터: costmap frame(odom) 기준 [X, Y, theta(yaw)]
  */
