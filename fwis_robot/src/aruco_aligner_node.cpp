@@ -1,19 +1,14 @@
 /**
  * aruco_aligner_node.cpp
  *
- * 4WIS 정렬 제어 버전
+ * 4WIS 정렬 제어 버전 (C모드 전용)
  *
- * [변경사항]
- * - alignment_mode A, B 제거 → C, D 모드만 지원
- * - CSV 저장 기능 제거
- * - 마커 ID 시퀀스 순환 기능 유지
- * - [수정] C모드: 마커 하나만 보여도 정렬 시작
- *   하나만 보일 때 → yaw, center_x, z_avg 맞추기
- *   둘 다 보이면 → z_diff까지 정밀 정렬
- *
- * alignment_mode:
- *   C = 좌/우 스캐너 + 좌/우 마커 1개씩
- *   D = 좌/우 스캐너 + 각 2개씩 총 4마커
+ * [정렬 흐름]
+ * 1개만 보임 → YAW → YAW_SETTLE → X → Z (dist만)
+ *     → dist 맞췄는데 아직 1개 → SEARCH (보이는 마커 쪽으로 crab)
+ *     → 2개 보이면 → YAW부터 재시작
+ *     → YAW → YAW_SETTLE → X → Z (2개, z_diff까지) → 완료
+ * 완료 판정은 양쪽 마커 보일 때만
  */
 
 #include <algorithm>
@@ -28,7 +23,6 @@
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/float32.hpp"
 #include "std_msgs/msg/float32_multi_array.hpp"
-#include "std_msgs/msg/string.hpp"
 #include "ros2_aruco_interfaces/msg/aruco_markers.hpp"
 
 namespace {
@@ -43,27 +37,19 @@ constexpr std::array<double, 4> kCrabSteerAngles    = { 90.0, 90.0,  90.0,  90.0
 constexpr std::array<double, 4> kSpinInwheelSign = {-1.0, +1.0, -1.0, +1.0};
 constexpr std::array<double, 4> kSameInwheelSign = {+1.0, +1.0, +1.0, +1.0};
 
-double Clamp(double v, double lo, double hi)
-{
-    return std::max(lo, std::min(hi, v));
-}
+double Clamp(double v, double lo, double hi) { return std::max(lo, std::min(hi, v)); }
 
 double ApplyMinAbs(double v, double min_abs)
 {
-    if (v != 0.0 && std::fabs(v) < min_abs)
-        return std::copysign(min_abs, v);
+    if (v != 0.0 && std::fabs(v) < min_abs) return std::copysign(min_abs, v);
     return v;
 }
 
-double LpfLinear(double prev, double next, double alpha)
-{
-    return alpha * next + (1.0 - alpha) * prev;
-}
+double LpfLinear(double prev, double next, double alpha) { return alpha * next + (1.0 - alpha) * prev; }
 
 double QuatToYaw(double qx, double qy, double qz, double qw)
 {
-    return std::atan2(2.0 * (qw * qz + qx * qy),
-                      1.0 - 2.0 * (qy * qy + qz * qz));
+    return std::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz));
 }
 
 double NormalizeAngle(double a)
@@ -82,13 +68,6 @@ public:
     : Node("aruco_aligner_node", options)
     {
         LoadParams();
-
-        if (alignment_mode_ != "C" && alignment_mode_ != "D") {
-            RCLCPP_FATAL(this->get_logger(),
-                "[ArucoAligner] 지원하지 않는 alignment_mode: %s (C 또는 D만 허용)",
-                alignment_mode_.c_str());
-            throw std::runtime_error("Unsupported alignment_mode: " + alignment_mode_);
-        }
 
         const auto qos = rclcpp::QoS(rclcpp::KeepLast(10));
 
@@ -131,8 +110,7 @@ public:
         sub_scan_done_ = this->create_subscription<std_msgs::msg::Bool>(
             "/scan_done", qos,
             [this](const std_msgs::msg::Bool::SharedPtr msg) {
-                if (!msg->data) return;
-                if (state_ != State::DONE) return;
+                if (!msg->data || state_ != State::DONE) return;
                 RCLCPP_INFO(this->get_logger(), "[ArucoAligner] scan_done 수신 → 다음 사이클");
                 ResetForNextCycle();
             });
@@ -145,15 +123,14 @@ public:
         ApplyCurrentSequence();
 
         RCLCPP_INFO(this->get_logger(),
-            "[ArucoAligner] start | mode=%s | 시퀀스=%zu세트",
-            alignment_mode_.c_str(), marker_sequences_.size());
+            "[ArucoAligner] start | 시퀀스=%zu세트", marker_sequences_.size());
         LogCurrentSequence();
     }
 
 private:
     enum class Side  { LEFT, RIGHT };
     enum class State { WAITING, ALIGNING, DONE };
-    enum class Phase { YAW, YAW_SETTLE, X, Z };
+    enum class Phase { YAW, YAW_SETTLE, X, Z, SEARCH };
 
     struct MF {
         bool   valid = false;
@@ -161,43 +138,28 @@ private:
         double x = 0.0, z = 0.0, yaw = 0.0;
     };
 
-    struct MarkerSet {
-        std::vector<int> ids;
-    };
+    struct MarkerSet { std::vector<int> ids; };
 
     struct Params {
-        double ref_x            = 0.0;
-        double ref_yaw_left     = 0.0;
-        double ref_yaw_right    = 0.0;
-        double target_avg_dist  = 0.0;
-        double target_z_diff    = 0.0;
-
-        int marker_id_left  = 3;
-        int marker_id_right = 2;
-
-        int    marker_id_d_l1       = 3;
-        int    marker_id_d_l2       = 4;
-        int    marker_id_d_r1       = 2;
-        int    marker_id_d_r2       = 1;
-        double ref_yaw_d            = 0.0;
-        double ref_x_d_left         = 0.0;
-        double ref_x_d_right        = 0.0;
-        double target_avg_dist_d    = 0.0;
-        double target_z_diff_d_left = 0.0;
-        double target_z_diff_d_right= 0.0;
+        double ref_x           = 0.0;
+        double ref_yaw_left    = 0.0;
+        double ref_yaw_right   = 0.0;
+        double target_avg_dist = 0.0;
+        double target_z_diff   = 0.0;
+        int    marker_id_left  = 2;
+        int    marker_id_right = 1;
 
         double kp_w = 3.0, kp_x = 0.2, kp_y = 0.2, kp_diff = 0.2;
+        double max_w = 0.15, min_w = 0.10;
+        double max_vx = 0.15, min_vx = 0.10;
+        double max_vy = 0.15, min_vy = 0.10;
 
-        double max_w = 0.10, min_w = 0.05;
-        double max_vx = 0.14, min_vx = 0.10;
-        double max_vy = 0.14, min_vy = 0.10;
-
-        double thr_yaw = 0.020, thr_center = 0.010;
+        double thr_yaw = 0.018, thr_center = 0.015;
         double thr_dist = 0.015, thr_diff = 0.015;
         int    required_stable = 3;
 
-        double thr_yaw_enter_x     = 0.015;
-        double thr_yaw_back_to_yaw = 0.035;
+        double thr_yaw_enter_x       = 0.015;
+        double thr_yaw_back_to_yaw   = 0.030;
         int    yaw_ok_required_count = 3;
         double x_phase_min_hold_time = 0.7;
         double yaw_brake_band        = 0.03;
@@ -211,48 +173,32 @@ private:
 
         double sign_yaw = -1.0, sign_x = 1.0;
         double sign_dist = -1.0, sign_diff = 1.0;
-
         double steer_tol = 5.0;
     };
 
     struct Errors {
-        bool ok = false;
-        double e_yaw   = 0.0;
-        double e_x     = 0.0;
-        double e_z_avg = 0.0;
-        double e_z_diff= 0.0;
+        bool   ok           = false;
+        bool   both_visible = false;
+        bool   left_visible = false;
+        bool   right_visible= false;
+        double e_yaw = 0.0, e_x = 0.0, e_z_avg = 0.0, e_z_diff = 0.0;
         double e_yaw_l = 0.0, e_yaw_r = 0.0;
-        double e_z_diff_l = 0.0, e_z_diff_r = 0.0;
-        bool both_visible = false;  // 양쪽 마커 모두 보이는지
+        double e_z_diff_l = 0.0;
     };
 
+    // ── 파라미터 로드 ──────────────────────────────────────────
     void LoadParams()
     {
         auto g  = [this](const std::string & n){ return this->get_parameter(n).as_double(); };
-        auto gi = [this](const std::string & n){ return this->get_parameter(n).as_int(); };
-        auto gs = [this](const std::string & n){ return this->get_parameter(n).as_string(); };
-
-        alignment_mode_ = gs("alignment_mode");
+        auto gi = [this](const std::string & n){ return (int)this->get_parameter(n).as_int(); };
 
         p_.ref_x           = g("ref_x");
         p_.ref_yaw_left    = g("ref_yaw_left");
         p_.ref_yaw_right   = g("ref_yaw_right");
         p_.target_avg_dist = g("target_avg_dist");
         p_.target_z_diff   = g("target_z_diff");
-
         p_.marker_id_left  = gi("marker_id_left");
         p_.marker_id_right = gi("marker_id_right");
-
-        p_.marker_id_d_l1        = gi("marker_id_d_l1");
-        p_.marker_id_d_l2        = gi("marker_id_d_l2");
-        p_.marker_id_d_r1        = gi("marker_id_d_r1");
-        p_.marker_id_d_r2        = gi("marker_id_d_r2");
-        p_.ref_yaw_d             = g("ref_yaw_d");
-        p_.ref_x_d_left          = g("ref_x_d_left");
-        p_.ref_x_d_right         = g("ref_x_d_right");
-        p_.target_avg_dist_d     = g("target_avg_dist_d");
-        p_.target_z_diff_d_left  = g("target_z_diff_d_left");
-        p_.target_z_diff_d_right = g("target_z_diff_d_right");
 
         p_.kp_w = g("kp_w"); p_.kp_x = g("kp_x");
         p_.kp_y = g("kp_y"); p_.kp_diff = g("kp_diff");
@@ -284,7 +230,6 @@ private:
         p_.sign_x    = g("sign_x");
         p_.sign_dist = g("sign_dist");
         p_.sign_diff = g("sign_diff");
-
         p_.steer_tol = g("steer_position_tolerance");
 
         LoadMarkerSequences();
@@ -294,44 +239,21 @@ private:
     {
         marker_sequences_.clear();
         sequence_index_ = 0;
-
         try {
-            if (alignment_mode_ == "D") {
-                auto l1 = this->get_parameter("marker_sequence_d_l1").as_integer_array();
-                auto l2 = this->get_parameter("marker_sequence_d_l2").as_integer_array();
-                auto r1 = this->get_parameter("marker_sequence_d_r1").as_integer_array();
-                auto r2 = this->get_parameter("marker_sequence_d_r2").as_integer_array();
-
-                size_t n = std::min({l1.size(), l2.size(), r1.size(), r2.size()});
-                for (size_t i = 0; i < n; ++i) {
-                    MarkerSet s;
-                    s.ids = { static_cast<int>(l1[i]), static_cast<int>(l2[i]),
-                              static_cast<int>(r1[i]), static_cast<int>(r2[i]) };
-                    marker_sequences_.push_back(s);
-                }
-            } else {
-                auto lv = this->get_parameter("marker_sequence_left").as_integer_array();
-                auto rv = this->get_parameter("marker_sequence_right").as_integer_array();
-
-                size_t n = std::min(lv.size(), rv.size());
-                for (size_t i = 0; i < n; ++i) {
-                    MarkerSet s;
-                    s.ids = { static_cast<int>(lv[i]), static_cast<int>(rv[i]) };
-                    marker_sequences_.push_back(s);
-                }
+            auto lv = this->get_parameter("marker_sequence_left").as_integer_array();
+            auto rv = this->get_parameter("marker_sequence_right").as_integer_array();
+            size_t n = std::min(lv.size(), rv.size());
+            for (size_t i = 0; i < n; ++i) {
+                MarkerSet s;
+                s.ids = { static_cast<int>(lv[i]), static_cast<int>(rv[i]) };
+                marker_sequences_.push_back(s);
             }
         } catch (const rclcpp::exceptions::ParameterNotDeclaredException &) {
-            RCLCPP_WARN(this->get_logger(),
-                "[ArucoAligner] marker_sequence 파라미터 없음 → 기본 ID 단일 세트 사용");
+            RCLCPP_WARN(this->get_logger(), "[ArucoAligner] marker_sequence 없음 → 기본 ID 사용");
         }
-
         if (marker_sequences_.empty()) {
             MarkerSet s;
-            if (alignment_mode_ == "D")
-                s.ids = { p_.marker_id_d_l1, p_.marker_id_d_l2,
-                          p_.marker_id_d_r1, p_.marker_id_d_r2 };
-            else
-                s.ids = { p_.marker_id_left, p_.marker_id_right };
+            s.ids = { p_.marker_id_left, p_.marker_id_right };
             marker_sequences_.push_back(s);
         }
     }
@@ -340,12 +262,7 @@ private:
     {
         if (marker_sequences_.empty()) return;
         const auto & s = marker_sequences_[sequence_index_];
-        if (alignment_mode_ == "D" && s.ids.size() >= 4) {
-            p_.marker_id_d_l1 = s.ids[0];
-            p_.marker_id_d_l2 = s.ids[1];
-            p_.marker_id_d_r1 = s.ids[2];
-            p_.marker_id_d_r2 = s.ids[3];
-        } else if (alignment_mode_ == "C" && s.ids.size() >= 2) {
+        if (s.ids.size() >= 2) {
             p_.marker_id_left  = s.ids[0];
             p_.marker_id_right = s.ids[1];
         }
@@ -359,8 +276,7 @@ private:
             if (i > 0) id_str += ", ";
             id_str += std::to_string(s.ids[i]);
         }
-        RCLCPP_INFO(this->get_logger(),
-            "[ArucoAligner] 현재 시퀀스 [%zu/%zu] 마커 IDs: [%s]",
+        RCLCPP_INFO(this->get_logger(), "[ArucoAligner] 시퀀스 [%zu/%zu] IDs: [%s]",
             sequence_index_ + 1, marker_sequences_.size(), id_str.c_str());
     }
 
@@ -370,8 +286,7 @@ private:
                (this->get_clock()->now() - t).seconds() <= p_.marker_timeout;
     }
 
-    void UpdateFilter(MF & f, rclcpp::Time & t, int id,
-                      double nx, double nz, double nyaw)
+    void UpdateFilter(MF & f, rclcpp::Time & t, int id, double nx, double nz, double nyaw)
     {
         if (!f.valid) {
             f = {true, id, nx, nz, nyaw};
@@ -386,14 +301,11 @@ private:
         t = this->get_clock()->now();
     }
 
-    void PublishPause(bool v) {
-        std_msgs::msg::Bool m; m.data = v; pause_pub_->publish(m);
-    }
+    void PublishPause(bool v) { std_msgs::msg::Bool m; m.data = v; pause_pub_->publish(m); }
 
     void MarkerCb(const ros2_aruco_interfaces::msg::ArucoMarkers::SharedPtr msg, Side side)
     {
         if (msg->marker_ids.empty() || state_ == State::DONE) return;
-
         for (size_t i = 0; i < msg->marker_ids.size(); ++i) {
             const int id = static_cast<int>(msg->marker_ids[i]);
             const auto & pose = msg->poses[i];
@@ -401,136 +313,74 @@ private:
             const double nz = pose.position.z;
             const double ny = QuatToYaw(pose.orientation.x, pose.orientation.y,
                                         pose.orientation.z, pose.orientation.w);
-
-            if (alignment_mode_ == "C") {
-                if (side == Side::LEFT  && id == p_.marker_id_left)  UpdateFilter(l1_, l1_t_, id, nx, nz, ny);
-                if (side == Side::RIGHT && id == p_.marker_id_right) UpdateFilter(r1_, r1_t_, id, nx, nz, ny);
-            } else {
-                if (side == Side::LEFT) {
-                    if (id == p_.marker_id_d_l1) UpdateFilter(l1_, l1_t_, id, nx, nz, ny);
-                    if (id == p_.marker_id_d_l2) UpdateFilter(l2_, l2_t_, id, nx, nz, ny);
-                } else {
-                    if (id == p_.marker_id_d_r1) UpdateFilter(r1_, r1_t_, id, nx, nz, ny);
-                    if (id == p_.marker_id_d_r2) UpdateFilter(r2_, r2_t_, id, nx, nz, ny);
-                }
-            }
+            if (side == Side::LEFT  && id == p_.marker_id_left)  UpdateFilter(l1_, l1_t_, id, nx, nz, ny);
+            if (side == Side::RIGHT && id == p_.marker_id_right) UpdateFilter(r1_, r1_t_, id, nx, nz, ny);
         }
-
         TryStartAlign();
     }
 
-    // ── [수정] 정렬 시작 조건: C모드는 하나만 있어도 시작 ────
+    // 하나만 있어도 시작
     bool ReadyToStart()
     {
-        if (alignment_mode_ == "C") {
-            bool left_ok  = l1_.valid && IsFresh(l1_t_);
-            bool right_ok = r1_.valid && IsFresh(r1_t_);
-            return left_ok || right_ok;  // 하나만 있어도 OK
-        }
-        return l1_.valid && IsFresh(l1_t_) && l2_.valid && IsFresh(l2_t_) &&
-               r1_.valid && IsFresh(r1_t_) && r2_.valid && IsFresh(r2_t_);
+        return (l1_.valid && IsFresh(l1_t_)) || (r1_.valid && IsFresh(r1_t_));
     }
 
     void TryStartAlign()
     {
         if (state_ != State::WAITING || !ReadyToStart()) return;
         std_msgs::msg::Bool det; det.data = true; detected_pub_->publish(det);
-        RCLCPP_INFO(this->get_logger(),
-            "[ArucoAligner] mode=%s 마커 감지 완료 → 정렬 시작", alignment_mode_.c_str());
+        RCLCPP_INFO(this->get_logger(), "[ArucoAligner] 마커 감지 → 정렬 시작");
         PublishPause(true);
-        state_           = State::ALIGNING;
-        phase_           = Phase::YAW;
-        stable_count_    = 0;
-        yaw_ok_count_    = 0;
-        yaw_locked_      = false;
+        state_               = State::ALIGNING;
+        phase_               = Phase::YAW;
+        stable_count_        = 0;
+        yaw_ok_count_        = 0;
+        yaw_locked_          = false;
         yaw_settle_ok_count_ = 0;
-        x_phase_enter_t_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
-        yaw_settle_t_    = rclcpp::Time(0, 0, RCL_ROS_TIME);
-        align_start_t_   = this->get_clock()->now();
+        x_phase_enter_t_     = rclcpp::Time(0, 0, RCL_ROS_TIME);
+        yaw_settle_t_        = rclcpp::Time(0, 0, RCL_ROS_TIME);
+        align_start_t_       = this->get_clock()->now();
         ++trial_count_;
     }
 
-    // ── [수정] 오차 계산: C모드에서 하나만 보여도 계산 ───────
     Errors ComputeErrors()
     {
         Errors e;
+        bool lf = l1_.valid && IsFresh(l1_t_);
+        bool rf = r1_.valid && IsFresh(r1_t_);
+        if (!lf && !rf) return e;
 
-        if (alignment_mode_ == "C") {
-            bool lf = l1_.valid && IsFresh(l1_t_);
-            bool rf = r1_.valid && IsFresh(r1_t_);
+        e.ok           = true;
+        e.both_visible = lf && rf;
+        e.left_visible = lf;
+        e.right_visible= rf;
 
-            if (!lf && !rf) return e;  // 둘 다 없으면 리턴
-            e.ok = true;
-            e.both_visible = lf && rf;
-
-            if (lf && rf) {
-                // 양쪽 다 보임 → 기존 로직 그대로 (정밀 정렬)
-                double eyl = NormalizeAngle(l1_.yaw - p_.ref_yaw_left);
-                double eyr = NormalizeAngle(r1_.yaw - p_.ref_yaw_right);
-                e.e_yaw   = 0.5 * (eyl + eyr);
-                e.e_yaw_l = eyl;
-                e.e_yaw_r = eyr;
-                e.e_x     = 0.5 * ((l1_.x - p_.ref_x) + (-(r1_.x - p_.ref_x)));
-                e.e_z_avg = 0.5 * (l1_.z + r1_.z) - p_.target_avg_dist;
-                e.e_z_diff   = (l1_.z - r1_.z) - p_.target_z_diff;
-                e.e_z_diff_l = e.e_z_diff;
-                RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 500,
-                    "[ArucoAligner] 양쪽 마커 보임 → 정밀 정렬");
-
-            } else if (lf) {
-                // 왼쪽만 보임
-                e.e_yaw   = NormalizeAngle(l1_.yaw - p_.ref_yaw_left);
-                e.e_yaw_l = e.e_yaw;
-                e.e_yaw_r = e.e_yaw;
-                e.e_x     = l1_.x - p_.ref_x;
-                e.e_z_avg = l1_.z - p_.target_avg_dist;
-                e.e_z_diff   = 0.0;  // 모르니까 0
-                e.e_z_diff_l = 0.0;
-                RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                    "[ArucoAligner] 왼쪽 마커만 보임 → 단일 마커 정렬");
-
-            } else {
-                // 오른쪽만 보임
-                e.e_yaw   = NormalizeAngle(r1_.yaw - p_.ref_yaw_right);
-                e.e_yaw_l = e.e_yaw;
-                e.e_yaw_r = e.e_yaw;
-                e.e_x     = -(r1_.x - p_.ref_x);
-                e.e_z_avg = r1_.z - p_.target_avg_dist;
-                e.e_z_diff   = 0.0;
-                e.e_z_diff_l = 0.0;
-                RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                    "[ArucoAligner] 오른쪽 마커만 보임 → 단일 마커 정렬");
-            }
-
-        } else {  // D모드: 기존 로직 그대로
-            bool ll1 = l1_.valid && IsFresh(l1_t_);
-            bool ll2 = l2_.valid && IsFresh(l2_t_);
-            bool rr1 = r1_.valid && IsFresh(r1_t_);
-            bool rr2 = r2_.valid && IsFresh(r2_t_);
-            if (!ll1 || !ll2 || !rr1 || !rr2) return e;
-            e.ok = true;
-            e.both_visible = true;
-
-            double eyl1 = NormalizeAngle(l1_.yaw - p_.ref_yaw_d);
-            double eyl2 = NormalizeAngle(l2_.yaw - p_.ref_yaw_d);
-            double eyr1 = NormalizeAngle(r1_.yaw - p_.ref_yaw_d);
-            double eyr2 = NormalizeAngle(r2_.yaw - p_.ref_yaw_d);
-            e.e_yaw_l = 0.5 * (eyl1 + eyl2);
-            e.e_yaw_r = 0.5 * (eyr1 + eyr2);
-            e.e_yaw   = 0.5 * (e.e_yaw_l + e.e_yaw_r);
-
-            double ex_l = (l1_.x + l2_.x) * 0.5 - p_.ref_x_d_left;
-            double ex_r = -((r1_.x + r2_.x) * 0.5 - p_.ref_x_d_right);
-            e.e_x = 0.5 * (ex_l + ex_r);
-
-            double z_all = (l1_.z + l2_.z + r1_.z + r2_.z) * 0.25;
-            e.e_z_avg = z_all - p_.target_avg_dist_d;
-
-            e.e_z_diff_l = (l1_.z - l2_.z) - p_.target_z_diff_d_left;
-            e.e_z_diff_r = (r1_.z - r2_.z) - p_.target_z_diff_d_right;
-            e.e_z_diff   = 0.5 * (e.e_z_diff_l + e.e_z_diff_r);
+        if (lf && rf) {
+            double eyl = NormalizeAngle(l1_.yaw - p_.ref_yaw_left);
+            double eyr = NormalizeAngle(r1_.yaw - p_.ref_yaw_right);
+            e.e_yaw   = 0.5 * (eyl + eyr);
+            e.e_yaw_l = eyl; e.e_yaw_r = eyr;
+            e.e_x     = 0.5 * ((l1_.x - p_.ref_x) + (-(r1_.x - p_.ref_x)));
+            e.e_z_avg = 0.5 * (l1_.z + r1_.z) - p_.target_avg_dist;
+            e.e_z_diff   = (l1_.z - r1_.z) - p_.target_z_diff;
+            e.e_z_diff_l = e.e_z_diff;
+        } else if (lf) {
+            e.e_yaw   = NormalizeAngle(l1_.yaw - p_.ref_yaw_left);
+            e.e_yaw_l = e.e_yaw; e.e_yaw_r = e.e_yaw;
+            e.e_x     = l1_.x - p_.ref_x;
+            e.e_z_avg = l1_.z - p_.target_avg_dist;
+            e.e_z_diff = 0.0; e.e_z_diff_l = 0.0;
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                "[ArucoAligner] 왼쪽 마커만 보임");
+        } else {
+            e.e_yaw   = NormalizeAngle(r1_.yaw - p_.ref_yaw_right);
+            e.e_yaw_l = e.e_yaw; e.e_yaw_r = e.e_yaw;
+            e.e_x     = -(r1_.x - p_.ref_x);
+            e.e_z_avg = r1_.z - p_.target_avg_dist;
+            e.e_z_diff = 0.0; e.e_z_diff_l = 0.0;
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                "[ArucoAligner] 오른쪽 마커만 보임");
         }
-
         return e;
     }
 
@@ -569,12 +419,34 @@ private:
         const bool yaw_enter = IsYawEnterOk(e);
         const bool yaw_bad   = IsYawBackBad(e);
         const bool yaw_ok    = IsYawOk(e);
-        const bool center_ok = e.ok && std::fabs(e.e_x)     < p_.thr_center;
-        const bool dist_ok   = e.ok && std::fabs(e.e_z_avg) < p_.thr_dist;
-
-        // z_diff는 양쪽 마커 보일 때만 체크
+        const bool center_ok = std::fabs(e.e_x)     < p_.thr_center;
+        const bool dist_ok   = std::fabs(e.e_z_avg) < p_.thr_dist;
         const bool diff_ok   = !e.both_visible || (std::fabs(e.e_z_diff) < p_.thr_diff);
 
+        // ── SEARCH phase ─────────────────────────────────────
+        if (phase_ == Phase::SEARCH) {
+            if (e.both_visible) {
+                RCLCPP_INFO(this->get_logger(),
+                    "[ArucoAligner] SEARCH → 양쪽 감지! YAW부터 재시작");
+                phase_               = Phase::YAW;
+                stable_count_        = 0;
+                yaw_ok_count_        = 0;
+                yaw_locked_          = false;
+                yaw_settle_ok_count_ = 0;
+                x_phase_enter_t_     = rclcpp::Time(0, 0, RCL_ROS_TIME);
+                yaw_settle_t_        = rclcpp::Time(0, 0, RCL_ROS_TIME);
+            } else {
+                // 보이는 마커 쪽으로 crab 이동
+                double spd = e.left_visible ? p_.min_vy : -p_.min_vy;
+                PublishFixed(kCrabSteerAngles, kSameInwheelSign, spd);
+                RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
+                    "[ArucoAligner] SEARCH | %s 마커만 보임 | spd=%.3f",
+                    e.left_visible ? "왼쪽" : "오른쪽", spd);
+                return;
+            }
+        }
+
+        // ── 일반 phase 전환 ───────────────────────────────────
         if (phase_ == Phase::YAW) {
             yaw_ok_count_ = yaw_enter ? yaw_ok_count_ + 1 : 0;
             if (yaw_ok_count_ >= p_.yaw_ok_required_count) {
@@ -614,14 +486,28 @@ private:
             RCLCPP_WARN(this->get_logger(), "[ArucoAligner] X중 yaw 틀어짐 → YAW");
         }
 
-        const bool all_ok = yaw_ok && center_ok && dist_ok && diff_ok;
+        // Z phase에서 dist OK인데 1개만 보이면 SEARCH
+        if (phase_ == Phase::Z && dist_ok && !e.both_visible) {
+            RCLCPP_INFO(this->get_logger(),
+                "[ArucoAligner] Z dist OK but 1개만 보임 → SEARCH");
+            phase_ = Phase::SEARCH;
+            PublishStop();
+            return;
+        }
+
+        // 완료 판정: 양쪽 마커 보일 때만
+        const bool all_ok = yaw_ok && center_ok && dist_ok && diff_ok && e.both_visible;
         stable_count_ = all_ok ? stable_count_ + 1 : 0;
 
-        const char * ps = (phase_==Phase::YAW)?"YAW":(phase_==Phase::YAW_SETTLE)?"YSET":(phase_==Phase::X)?"X":"Z";
+        const char * ps = (phase_==Phase::YAW)    ? "YAW"
+                        : (phase_==Phase::YAW_SETTLE) ? "YSET"
+                        : (phase_==Phase::X)       ? "X"
+                        : (phase_==Phase::Z)       ? "Z"
+                        : "SRCH";
         RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 250,
-            "[ALIGN|%s|%s|%s] eYL=%+.4f eYR=%+.4f(%s) eX=%+.4f(%s) "
+            "[ALIGN|%s|%s] eYL=%+.4f eYR=%+.4f(%s) eX=%+.4f(%s) "
             "eZavg=%+.4f(%s) eZdiff=%+.4f(%s) cnt=%d/%d",
-            alignment_mode_.c_str(), ps, e.both_visible ? "BOTH" : "ONE",
+            ps, e.both_visible ? "BOTH" : "ONE",
             e.e_yaw_l, e.e_yaw_r, yaw_ok?"OK":"--",
             e.e_x,     center_ok?"OK":"--",
             e.e_z_avg, dist_ok?"OK":"--",
@@ -649,13 +535,14 @@ private:
         }
         case Phase::Z: {
             double spd = 0.0;
-            if (!dist_ok) spd += p_.sign_dist * p_.kp_y    * e.e_z_avg;
+            if (!dist_ok) spd += p_.sign_dist * p_.kp_y * e.e_z_avg;
             if (!diff_ok && e.both_visible) spd += p_.sign_diff * p_.kp_diff * e.e_z_diff;
             if (std::fabs(spd) > 1e-6)
                 spd = ApplyMinAbs(Clamp(spd, -p_.max_vy, p_.max_vy), p_.min_vy);
             PublishFixed(kCrabSteerAngles, kSameInwheelSign, spd);
             break;
         }
+        case Phase::SEARCH: break;
         }
     }
 
@@ -684,25 +571,17 @@ private:
         PublishStop();
         state_ = State::DONE;
         double elapsed = (this->get_clock()->now() - align_start_t_).seconds();
-
         constexpr double kR2D  = 180.0 / M_PI;
         constexpr double kM2MM = 1000.0;
-        double yaw_err_deg   = std::max(std::fabs(e.e_yaw_l), std::fabs(e.e_yaw_r)) * kR2D;
-        double center_err_mm = std::fabs(e.e_x)     * kM2MM;
-        double dist_err_mm   = std::fabs(e.e_z_avg) * kM2MM;
-        bool   success       = IsYawOk(const_cast<Errors&>(e)) &&
-                               (std::fabs(e.e_x) < p_.thr_center) &&
-                               (std::fabs(e.e_z_avg) < p_.thr_dist);
-
         RCLCPP_INFO(this->get_logger(),
-            "[ArucoAligner] ★ 정렬 완료 ★ mode=%s trial=%d seq=[%zu/%zu] time=%.3fs | "
-            "yaw=%.2fdeg ctr=%.1fmm dist=%.1fmm | both=%d ok=%d",
-            alignment_mode_.c_str(), trial_count_,
-            sequence_index_ + 1, marker_sequences_.size(),
-            elapsed, yaw_err_deg, center_err_mm, dist_err_mm,
-            e.both_visible ? 1 : 0,
-            success ? 1 : 0);
-
+            "[ArucoAligner] ★ 정렬 완료 ★ trial=%d seq=[%zu/%zu] time=%.3fs | "
+            "yaw=%.2fdeg ctr=%.1fmm dist=%.1fmm | ok=%d",
+            trial_count_, sequence_index_ + 1, marker_sequences_.size(), elapsed,
+            std::max(std::fabs(e.e_yaw_l), std::fabs(e.e_yaw_r)) * kR2D,
+            std::fabs(e.e_x) * kM2MM, std::fabs(e.e_z_avg) * kM2MM,
+            (IsYawOk(const_cast<Errors&>(e)) &&
+             std::fabs(e.e_x) < p_.thr_center &&
+             std::fabs(e.e_z_avg) < p_.thr_dist) ? 1 : 0);
         std_msgs::msg::Bool dm; dm.data = true; done_pub_->publish(dm);
     }
 
@@ -713,22 +592,17 @@ private:
             ApplyCurrentSequence();
             LogCurrentSequence();
         }
-
         state_ = State::WAITING; phase_ = Phase::YAW;
         stable_count_ = yaw_ok_count_ = yaw_settle_ok_count_ = 0;
         yaw_locked_ = false;
-        l1_=l2_=r1_=r2_=MF{};
-        l1_t_=l2_t_=r1_t_=r2_t_=rclcpp::Time(0,0,RCL_ROS_TIME);
-        x_phase_enter_t_=yaw_settle_t_=rclcpp::Time(0,0,RCL_ROS_TIME);
-
-        RCLCPP_INFO(this->get_logger(),
-            "[ArucoAligner] 다음 실험 대기 중 (시퀀스 %zu/%zu)",
+        l1_ = r1_ = MF{};
+        l1_t_ = r1_t_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
+        x_phase_enter_t_ = yaw_settle_t_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
+        RCLCPP_INFO(this->get_logger(), "[ArucoAligner] 다음 사이클 대기 중 (%zu/%zu)",
             sequence_index_ + 1, marker_sequences_.size());
     }
 
     Params p_;
-    std::string alignment_mode_{"C"};
-
     std::vector<MarkerSet> marker_sequences_;
     size_t sequence_index_ = 0;
 
@@ -738,10 +612,8 @@ private:
     bool yaw_locked_ = false;
     int trial_count_ = 0;
 
-    MF l1_, l2_, r1_, r2_;
-    rclcpp::Time l1_t_{0,0,RCL_ROS_TIME}, l2_t_{0,0,RCL_ROS_TIME};
-    rclcpp::Time r1_t_{0,0,RCL_ROS_TIME}, r2_t_{0,0,RCL_ROS_TIME};
-
+    MF l1_, r1_;
+    rclcpp::Time l1_t_{0,0,RCL_ROS_TIME}, r1_t_{0,0,RCL_ROS_TIME};
     rclcpp::Time x_phase_enter_t_{0,0,RCL_ROS_TIME};
     rclcpp::Time yaw_settle_t_   {0,0,RCL_ROS_TIME};
     rclcpp::Time align_start_t_  {0,0,RCL_ROS_TIME};
@@ -753,8 +625,7 @@ private:
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_scan_done_;
     std::array<rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr,4> steer_pubs_;
     std::array<rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr,4> inwheel_pubs_;
-    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr done_pub_, pause_pub_;
-    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr detected_pub_;
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr done_pub_, pause_pub_, detected_pub_;
     rclcpp::TimerBase::SharedPtr timer_;
     rclcpp::Time last_time_;
 };

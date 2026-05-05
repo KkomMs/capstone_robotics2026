@@ -61,19 +61,6 @@ defaults:
         steer_err_full_drive: 2.0
         steer_err_zero_drive: 25.0
 
-    # ───────── Camera Motor Serial ─────────
-    common_camera_serial: &common_camera_serial
-      camera_serial:
-        port: "/dev/ttyUSB0"
-        baudrate: 115200
-        timeout_ms: 30
-        motor_ids:
-          camera_left: 0
-          camera_right: 1
-        min_angle_deg: -40.0
-        max_angle_deg: 180.0
-        publish_rate: 20.0
-
     # ───────── IMU ─────────
     common_imu: &common_imu
       imu_port: "/dev/ttyIMU"
@@ -118,22 +105,22 @@ defaults:
       kp_diff: 0.2
 
       # ── 속도 한계 ────────────────────────────────────────────
-      max_w:  0.15
-      min_w:  0.10
-      max_vx: 0.15
-      min_vx: 0.10
-      max_vy: 0.15
-      min_vy: 0.10
+      max_w:  0.18
+      min_w:  0.13
+      max_vx: 0.18
+      min_vx: 0.13
+      max_vy: 0.18
+      min_vy: 0.13
 
       # ── 수렴 임계값 ──────────────────────────────────────────
-      thr_yaw:         0.018
+      thr_yaw:         0.020
       thr_center:      0.015
       thr_dist:        0.015
       thr_diff:        0.015
       required_stable: 3
 
       # ── 페이즈 전환 ──────────────────────────────────────────
-      thr_yaw_enter_x:       0.015
+      thr_yaw_enter_x:       0.018
       thr_yaw_back_to_yaw:   0.030
       yaw_ok_required_count: 3
       x_phase_min_hold_time: 0.7
@@ -229,13 +216,6 @@ defaults:
 mobile_robot_node:
   ros__parameters:
     <<: [*common_frames, *common_geom, *common_ctrl, *common_profile]
-
-# ─────────────────────────────────────────────────────────────────────────────
-# camera_node
-# ─────────────────────────────────────────────────────────────────────────────
-camera_node:
-  ros__parameters:
-    <<: [*common_camera_serial]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # imu_node

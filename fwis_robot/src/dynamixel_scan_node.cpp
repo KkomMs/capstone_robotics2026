@@ -1,13 +1,14 @@
 /**
  * dynamixel_scan_node.cpp
  *
- * 변경사항 (테스트용 코드 기준으로 수정):
+ * 변경사항:
  *  - P0 구간 추가 (천천히 시작 구간)
  *  - scanner_id 기반 축 분리 (바코드 받은 쪽 축만 이동)
  *  - TiltState publish 추가
  *  - yaml 파라미터 기반 유지
  *  - /alignment_done → 딜레이 후 스캔 시작
  *  - /scan_done publish 유지
+ *  - [수정] 각 축 복귀 시작 시 해당 축 스캔 결과 출력
  */
 
 #include "scanner_interfaces/msg/barcode_event.hpp"
@@ -28,7 +29,6 @@
 
 #include "dynamixel_sdk.h"
 
-// ── Dynamixel 레지스터 주소 ──
 static constexpr uint16_t ADDR_OPERATING_MODE   = 11;
 static constexpr uint16_t ADDR_TORQUE_ENABLE    = 64;
 static constexpr uint16_t ADDR_PROFILE_VELOCITY = 112;
@@ -39,9 +39,8 @@ static constexpr uint8_t  EXT_POSITION_MODE     = 4;
 static constexpr uint8_t  TORQUE_ENABLE_VAL     = 1;
 static constexpr uint8_t  TORQUE_DISABLE_VAL    = 0;
 
-// ── 모터 상태 ─────────────────────────────────────────────────
 enum class MotorState {
-    P0_STEP_MOVE, P0_STEP_WAIT,   // 테스트용에서 추가된 P0 구간
+    P0_STEP_MOVE, P0_STEP_WAIT,
     P1_SWEEP,
     P2_STEP_MOVE, P2_STEP_WAIT,
     P3_STEP_MOVE, P3_STEP_WAIT,
@@ -57,6 +56,7 @@ struct MotorAxis {
     bool    p2_is_sweep = false;
     int32_t current_tick = 0;
     int32_t goal_tick    = 0;
+    bool    summary_printed = false;  // 복귀 시 summary 중복 출력 방지
     MotorState   state      = MotorState::DONE;
     rclcpp::Time wait_start;
 
@@ -65,85 +65,24 @@ struct MotorAxis {
     }
 };
 
-// ── 바코드 집계 ───────────────────────────────────────────────
 struct SlotRecord {
     std::string serial;
     int         unit = -1;
 };
 
 struct ScanStats {
-    std::map<int, SlotRecord>   records;
-    std::map<int, rclcpp::Time> first_time;
-    std::map<int, rclcpp::Time> last_time;
-    std::map<int, bool>         has_any;
+    // scanner_id별로 slot 결과 저장
+    std::map<int, std::map<int, SlotRecord>> records_by_sid;
 
     void Reset() {
-        records.clear(); first_time.clear();
-        last_time.clear(); has_any.clear();
+        records_by_sid.clear();
     }
 
-    void Record(int slot, int sid, const std::string & serial, const rclcpp::Time & t) {
-        records[slot] = {serial, slot};
-        if (!has_any[sid]) { first_time[sid] = t; has_any[sid] = true; }
-        last_time[sid] = t;
-    }
-
-    void PrintResult(rclcpp::Logger logger,
-                     int total_slots,
-                     const std::set<int> & empty_slots) const
-    {
-        RCLCPP_INFO(logger, "");
-        RCLCPP_INFO(logger, "========================================");
-        RCLCPP_INFO(logger, "      바코드 스캔 결과 (U01~U%02d)      ", total_slots);
-        RCLCPP_INFO(logger, "========================================");
-
-        int filled_det = 0, empty_false = 0, empty_ok = 0;
-        int filled_count = total_slots - (int)empty_slots.size();
-
-        for (int slot = 1; slot <= total_slots; ++slot) {
-            bool is_empty = empty_slots.count(slot) > 0;
-            auto it       = records.find(slot);
-            bool detected = (it != records.end());
-
-            if (detected) {
-                if (is_empty) {
-                    RCLCPP_WARN(logger,
-                        "  U%02d | [오인식] serial=%s  ← 빈 슬롯인데 감지됨",
-                        slot, it->second.serial.c_str());
-                    ++empty_false;
-                } else {
-                    RCLCPP_INFO(logger, "  U%02d | serial=%s",
-                        slot, it->second.serial.c_str());
-                    ++filled_det;
-                }
-            } else {
-                if (is_empty) {
-                    RCLCPP_INFO(logger, "  U%02d | [빈 슬롯]", slot);
-                    ++empty_ok;
-                } else {
-                    RCLCPP_INFO(logger, "  U%02d | empty (미인식)", slot);
-                }
-            }
-        }
-
-        RCLCPP_INFO(logger, "========================================");
-        RCLCPP_INFO(logger, "  바코드 슬롯 인식: %d / %d (%.1f%%)",
-            filled_det, filled_count,
-            filled_count > 0 ? (double)filled_det / filled_count * 100.0 : 0.0);
-        RCLCPP_INFO(logger, "  빈 슬롯 정답:     %d / %d",
-            empty_ok, (int)empty_slots.size());
-        if (empty_false > 0)
-            RCLCPP_WARN(logger, "  빈 슬롯 오인식:   %d건", empty_false);
-        int total_correct = filled_det + empty_ok;
-        RCLCPP_INFO(logger, "  전체 정답률:      %d / %d (%.1f%%)",
-            total_correct, total_slots,
-            (double)total_correct / total_slots * 100.0);
-        RCLCPP_INFO(logger, "========================================");
-        RCLCPP_INFO(logger, "");
+    void Record(int slot, int sid, const std::string & serial) {
+        records_by_sid[sid][slot] = {serial, slot};
     }
 };
 
-// ── ROS2 Node ────────────────────────────────────────────────
 class DynamixelScanNode : public rclcpp::Node
 {
 public:
@@ -193,63 +132,45 @@ public:
     ~DynamixelScanNode() { CloseDxl(); }
 
 private:
-    // ── 파라미터 구조체 ────────────────────────────────────────
     struct Params {
         std::string device   = "/dev/ttyDynamixel";
         int         baudrate = 57600;
-
         int left_id  = 6;
         int right_id = 7;
-
-        // scanner_id (바코드 이벤트에서 어느 축인지 판별)
         int left_scanner_id  = 1;
         int right_scanner_id = 2;
-
-        // 왼쪽 축 위치
         int32_t left_start  =  330;
-        int32_t left_p0_end =  210;   // P0 구간 추가
+        int32_t left_p0_end =  210;
         int32_t left_p1_end = -610;
         int32_t left_p2_end = -870;
         int32_t left_end    = -960;
-
-        // 오른쪽 축 위치
         int32_t right_start  = 1470;
-        int32_t right_p0_end = 1350;  // P0 구간 추가
+        int32_t right_p0_end = 1350;
         int32_t right_p1_end =  530;
         int32_t right_p2_end =  270;
         int32_t right_end    =  160;
-
-        // 왼쪽 속도
         int left_vel_p1     = 3;
         int left_vel_step   = 1;
         int left_vel_return = 10;
-
-        // 오른쪽 속도
         int right_vel_p1     = 4;
         int right_vel_step   = 1;
         int right_vel_return = 10;
-
-        // 스텝 크기
         int left_p0_step  = 40;
         int left_p2_step  = 10;
         int left_p3_step  = 3;
         int right_p0_step = 40;
         int right_p2_step = 10;
         int right_p3_step = 5;
-
         bool left_p2_is_sweep  = false;
         bool right_p2_is_sweep = false;
-
         int    arrive_threshold         = 20;
         int    step_timeout_ms          = 3000;
         double alignment_done_delay_sec = 2.0;
         int    control_period_ms        = 100;
-
         int              total_slots = 51;
         std::vector<int> empty_slots = {9, 11, 14, 30, 39, 50};
     };
 
-    // ── 파라미터 로드 ─────────────────────────────────────────
     void LoadParams()
     {
         auto gi  = [this](const std::string & n){ return (int)this->get_parameter(n).as_int(); };
@@ -265,55 +186,43 @@ private:
 
         p_.device   = gs("dxl_device");
         p_.baudrate = gi("dxl_baudrate");
-
         p_.left_id  = gi("dxl_left_id");
         p_.right_id = gi("dxl_right_id");
-
         p_.left_scanner_id  = gi("dxl_left_scanner_id");
         p_.right_scanner_id = gi("dxl_right_scanner_id");
-
         p_.left_start  = (int32_t)gi("dxl_left_start");
         p_.left_p0_end = (int32_t)gi("dxl_left_p0_end");
         p_.left_p1_end = (int32_t)gi("dxl_left_p1_end");
         p_.left_p2_end = (int32_t)gi("dxl_left_p2_end");
         p_.left_end    = (int32_t)gi("dxl_left_end");
-
         p_.right_start  = (int32_t)gi("dxl_right_start");
         p_.right_p0_end = (int32_t)gi("dxl_right_p0_end");
         p_.right_p1_end = (int32_t)gi("dxl_right_p1_end");
         p_.right_p2_end = (int32_t)gi("dxl_right_p2_end");
         p_.right_end    = (int32_t)gi("dxl_right_end");
-
         p_.left_vel_p1     = gi("dxl_left_vel_p1");
         p_.left_vel_step   = gi("dxl_left_vel_step");
         p_.left_vel_return = gi("dxl_left_vel_return");
-
         p_.right_vel_p1     = gi("dxl_right_vel_p1");
         p_.right_vel_step   = gi("dxl_right_vel_step");
         p_.right_vel_return = gi("dxl_right_vel_return");
-
         p_.left_p0_step  = gi("dxl_left_p0_step");
         p_.left_p2_step  = gi("dxl_left_p2_step");
         p_.left_p3_step  = gi("dxl_left_p3_step");
         p_.right_p0_step = gi("dxl_right_p0_step");
         p_.right_p2_step = gi("dxl_right_p2_step");
         p_.right_p3_step = gi("dxl_right_p3_step");
-
         p_.left_p2_is_sweep  = gb("dxl_left_p2_is_sweep");
         p_.right_p2_is_sweep = gb("dxl_right_p2_is_sweep");
-
         p_.arrive_threshold         = gi("dxl_arrive_threshold");
         p_.step_timeout_ms          = gi("dxl_step_timeout_ms");
         p_.alignment_done_delay_sec = gd("alignment_done_delay_sec");
         p_.control_period_ms        = gi("dxl_control_period_ms");
-
         p_.total_slots = gi("total_slots");
         p_.empty_slots = giv("empty_slots");
-
         for (int s : p_.empty_slots) empty_slots_set_.insert(s);
     }
 
-    // ── 축 초기화 ─────────────────────────────────────────────
     void SetupAxes()
     {
         left_.id          = (uint8_t)p_.left_id;
@@ -349,17 +258,14 @@ private:
         right_.state       = MotorState::DONE;
     }
 
-    // ── Dynamixel 초기화 / 종료 ───────────────────────────────
     void InitDxl()
     {
         port_handler_   = dynamixel::PortHandler::getPortHandler(p_.device.c_str());
         packet_handler_ = dynamixel::PacketHandler::getPacketHandler(PROTOCOL_VERSION);
-
         if (!port_handler_->openPort())
             throw std::runtime_error("[DXL] Failed to open port: " + p_.device);
         if (!port_handler_->setBaudRate(p_.baudrate))
             throw std::runtime_error("[DXL] Failed to set baudrate");
-
         usleep(100 * 1000);
         uint8_t err = 0;
         for (int id : {p_.left_id, p_.right_id}) {
@@ -393,11 +299,12 @@ private:
         packet_handler_->write4ByteTxRx(port_handler_, id, ADDR_GOAL_POSITION,    (uint32_t)goal, &err);
     }
 
-    // ── 스캔 시작 ─────────────────────────────────────────────
     void StartScan()
     {
         scan_stats_.Reset();
         scanning_.store(true);
+        left_.summary_printed  = false;
+        right_.summary_printed = false;
         left_.goal_tick  = left_.start;
         right_.goal_tick = right_.start;
         StartP0(left_);
@@ -405,7 +312,6 @@ private:
         RCLCPP_INFO(get_logger(), "[DXL] scan started");
     }
 
-    // ── P0 시작 ───────────────────────────────────────────────
     void StartP0(MotorAxis & ax)
     {
         ax.state = MotorState::P0_STEP_MOVE;
@@ -414,7 +320,6 @@ private:
         SendStep(ax, ax.p0_end, ax.p0_step);
     }
 
-    // ── P1 시작 ───────────────────────────────────────────────
     void StartP1(MotorAxis & ax)
     {
         ax.goal_tick = ax.p1_end;
@@ -424,7 +329,6 @@ private:
             ax.name.c_str(), ax.vel_p1, ax.p1_end);
     }
 
-    // ── P2 시작 ───────────────────────────────────────────────
     void StartP2(MotorAxis & ax)
     {
         ax.state = MotorState::P2_STEP_MOVE;
@@ -432,7 +336,6 @@ private:
         SendStep(ax, ax.p2_end, ax.p2_step);
     }
 
-    // ── P3 시작 ───────────────────────────────────────────────
     void StartP3(MotorAxis & ax)
     {
         ax.state = MotorState::P3_STEP_MOVE;
@@ -440,9 +343,14 @@ private:
         SendStep(ax, ax.end, ax.p3_step);
     }
 
-    // ── 복귀 시작 ─────────────────────────────────────────────
+    // ── [수정] 복귀 시작 시 해당 축 summary 출력 ──────────────
     void StartReturn(MotorAxis & ax)
     {
+        if (!ax.summary_printed) {
+            int sid = (&ax == &left_) ? p_.left_scanner_id : p_.right_scanner_id;
+            PrintAxisSummary(ax.name, sid);
+            ax.summary_printed = true;
+        }
         ax.goal_tick = ax.start;
         ax.state     = MotorState::RETURNING;
         WriteVelGoal(ax.id, ax.vel_return, ax.start);
@@ -468,7 +376,6 @@ private:
 
     void StepToNext(MotorAxis & ax)
     {
-        // P0 구간
         if (ax.state == MotorState::P0_STEP_MOVE || ax.state == MotorState::P0_STEP_WAIT) {
             if (ax.current_tick <= ax.p0_end + p_.arrive_threshold) {
                 RCLCPP_INFO(get_logger(), "[%s] P0 done → P1 sweep", ax.name.c_str());
@@ -477,8 +384,6 @@ private:
             ax.state = MotorState::P0_STEP_MOVE;
             SendStep(ax, ax.p0_end, ax.p0_step); return;
         }
-
-        // P2 구간
         if (ax.state == MotorState::P2_STEP_MOVE || ax.state == MotorState::P2_STEP_WAIT) {
             if (ax.current_tick <= ax.p2_end + p_.arrive_threshold) {
                 RCLCPP_INFO(get_logger(), "[%s] P2 done → P3", ax.name.c_str());
@@ -487,8 +392,6 @@ private:
             ax.state = MotorState::P2_STEP_MOVE;
             SendStep(ax, ax.p2_end, ax.p2_step); return;
         }
-
-        // P3 구간
         if (ax.state == MotorState::P3_STEP_MOVE || ax.state == MotorState::P3_STEP_WAIT) {
             if (ax.current_tick <= ax.end + p_.arrive_threshold) {
                 RCLCPP_INFO(get_logger(), "[%s] P3 done → return", ax.name.c_str());
@@ -499,8 +402,6 @@ private:
         }
     }
 
-    // ── 바코드 이벤트 ─────────────────────────────────────────
-    // 테스트용 기준: 바코드 받은 스캐너의 축만 이동
     void OnBarcodeEvent(const scanner_interfaces::msg::BarcodeEvent & msg)
     {
         if (!scanning_.load()) return;
@@ -508,12 +409,11 @@ private:
         int sid  = msg.scanner_id;
         if (slot < 1 || slot > p_.total_slots) return;
 
-        scan_stats_.Record(slot, sid, msg.serial, this->now());
+        scan_stats_.Record(slot, sid, msg.serial);
         RCLCPP_INFO(get_logger(),
             "[DXL] barcode sid=%d slot=%02d serial=%s → next step",
             sid, slot, msg.serial.c_str());
 
-        // 해당 scanner_id에 맞는 축만 이동
         MotorAxis * ax = nullptr;
         if      (sid == p_.left_scanner_id)  ax = &left_;
         else if (sid == p_.right_scanner_id) ax = &right_;
@@ -528,14 +428,12 @@ private:
             StepToNext(*ax);
     }
 
-    // ── 제어 루프 ─────────────────────────────────────────────
     void ControlLoop()
     {
         if (!scanning_.load()) return;
         left_.current_tick  = ReadPos(left_.id);
         right_.current_tick = ReadPos(right_.id);
 
-        // TiltState publish
         scanner_interfaces::msg::TiltState tilt;
         tilt.stamp      = this->now();
         tilt.left_tick  = left_.current_tick;
@@ -558,7 +456,6 @@ private:
         case MotorState::P2_STEP_MOVE:
         case MotorState::P3_STEP_MOVE: {
             if (!ax.arrived(p_.arrive_threshold)) return;
-            // WAIT 상태로 전환
             if      (ax.state == MotorState::P0_STEP_MOVE) ax.state = MotorState::P0_STEP_WAIT;
             else if (ax.state == MotorState::P2_STEP_MOVE) ax.state = MotorState::P2_STEP_WAIT;
             else                                            ax.state = MotorState::P3_STEP_WAIT;
@@ -588,18 +485,53 @@ private:
         }
     }
 
-    // ── 스캔 완료 ─────────────────────────────────────────────
+    // ── [추가] 축별 스캔 결과 출력 ───────────────────────────
+    void PrintAxisSummary(const std::string & axis_name, int sid)
+    {
+        RCLCPP_INFO(get_logger(), "");
+        RCLCPP_INFO(get_logger(), "========== %s SCANNER RESULT ==========", axis_name.c_str());
+
+        int ok_count    = 0;
+        int empty_count = 0;
+        int miss_count  = 0;
+
+        auto sit = scan_stats_.records_by_sid.find(sid);
+
+        for (int u = 1; u <= p_.total_slots; ++u) {
+            bool is_empty = empty_slots_set_.count(u) > 0;
+            bool detected = (sit != scan_stats_.records_by_sid.end() &&
+                             sit->second.count(u) > 0);
+
+            if (detected) {
+                ok_count++;
+                RCLCPP_INFO(get_logger(), "  U%02d : OK    serial=%s",
+                    u, sit->second.at(u).serial.c_str());
+            } else if (is_empty) {
+                empty_count++;
+                RCLCPP_INFO(get_logger(), "  U%02d : [빈 슬롯]", u);
+            } else {
+                miss_count++;
+                RCLCPP_WARN(get_logger(), "  U%02d : NOT_SEEN", u);
+            }
+        }
+
+        int filled_slots = p_.total_slots - (int)empty_slots_set_.size();
+        RCLCPP_INFO(get_logger(), "");
+        RCLCPP_INFO(get_logger(), "  인식: %d / %d  (미인식: %d)",
+            ok_count, filled_slots, miss_count);
+        RCLCPP_INFO(get_logger(), "========== %s DONE ==========", axis_name.c_str());
+        RCLCPP_INFO(get_logger(), "");
+    }
+
     void FinishScan()
     {
         scanning_.store(false);
-        scan_stats_.PrintResult(this->get_logger(), p_.total_slots, empty_slots_set_);
         std_msgs::msg::Bool done_msg;
         done_msg.data = true;
         pub_scan_done_->publish(done_msg);
         RCLCPP_INFO(get_logger(), "[DXL] /scan_done published");
     }
 
-    // ── 멤버 변수 ─────────────────────────────────────────────
     Params            p_;
     MotorAxis         left_, right_;
     ScanStats         scan_stats_;
