@@ -793,7 +793,7 @@ bool MpcUFRWSController::orientationModes(
   double angle_diff = normalizeAngle(path_angle - robot_yaw);
 
   double turn_thres = 45.0;     // 제자리 회전 오차 임계값 [deg]
-  double align_complete = 5.0;  // 제자리 회전 완료 임계값 [deg]
+  double align_complete = 2.0;  // 제자리 회전 완료 임계값 [deg]
 
   // 1. 제자리 회전 모드
   if (point_turning_mode_) {

@@ -147,12 +147,10 @@ install(
 )
 
 ## Install
-install(
-  PROGRAMS
-    scripts/waypoints_creator.py
-    scripts/lyapunov_kinematics.py
-  DESTINATION
-    lib/${PROJECT_NAME}
+install(PROGRAMS
+  scripts/waypoint_manager.py
+  RENAME waypoint_manager
+  DESTINATION lib/${PROJECT_NAME}
 )
 
 ament_export_include_directories(include)

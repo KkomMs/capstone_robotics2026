@@ -42,10 +42,12 @@ def generate_launch_description():
         'rviz',
         'rviz_nav2.rviz')
     
-    waypoint_node = Node(
+    waypoint_manager_node = Node(
         package='nav2_simulation',
-        executable='waypoints_creator.py',
-        output='screen'
+        executable='waypoint_manager',
+        name='waypoint_manager',
+        output='screen',
+        parameters=[param_dir]
     )
     
     rviz_node = Node(
@@ -86,6 +88,6 @@ def generate_launch_description():
                 'params_file': param_dir,
                 'default_bt_xml_filename': bt_xml_dir}.items(),
         ),
-        #waypoint_node,
+        waypoint_manager_node,
         rviz_node,
     ])
