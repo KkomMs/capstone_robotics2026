@@ -25,11 +25,21 @@ import time
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
 from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
-from geometry_msgs.msg import PoseStamped, Quaternion
+from geometry_msgs.msg import PoseStamped, Quaternion, PoseWithCovarianceStamped  # [수정] PoseWithCovarianceStamped 추가
 from std_msgs.msg import Bool, String
 from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 
-# from geometry_msgs.msg import PoseStamped, Quaternion, PoseWithCovarianceStamped
+# ─────────────────────────────────────────────────────────────────────────────
+#  [추가] 위치 보정 설정
+#  teleop으로 측정한 각 마커 정렬 완료 시점의 로봇 map 좌표
+# ─────────────────────────────────────────────────────────────────────────────
+MARKER_MAP_POSES = {
+    0: (0.472, -2.72),   # 마커 1+2
+    1: (1.1,   -2.72),   # 마커 3+4
+    2: (1.79,  -2.73),   # 마커 5+6
+    3: (2.36,  -2.75),   # 마커 7+8
+    4: (2.92,  -2.82),   # 마커 9+10
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  유틸
@@ -71,17 +81,14 @@ def normalize_angle(angle: float) -> float:
 # ─────────────────────────────────────────────────────────────────────────────
 #  Determine GoalChecker
 # ─────────────────────────────────────────────────────────────────────────────
-XY_SAME_THRESHOLD = 0.05        # 같은 위치라고 판단하는 거리 [m]
-YAW_DIFF_THRESHOLD_DEG = 5.0        # yaw가 다르다고 판단하는 차이 [deg]
+XY_SAME_THRESHOLD = 0.05
+YAW_DIFF_THRESHOLD_DEG = 5.0
 YAW_DIFF_THRESHOLD = YAW_DIFF_THRESHOLD_DEG * math.pi / 180.0
 
 GENERAL_CHECKER_NAME = "general_goal_checker"
 PRECISE_CHECKER_NAME = "precise_goal_checker"
 
 def determine_goal_checker(prev_wp: PoseStamped, curr_wp: PoseStamped) -> str:
-    """
-    직전 waypoint와 현재 waypoint를 비교하여 적절한 Goalchecker 반환
-    """
     dx = curr_wp.pose.position.x - prev_wp.pose.position.x
     dy = curr_wp.pose.position.y - prev_wp.pose.position.y
     xy_dist = math.sqrt(dx * dx + dy * dy)
@@ -106,8 +113,6 @@ def determine_goal_checker(prev_wp: PoseStamped, curr_wp: PoseStamped) -> str:
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  토픽 수신 노드
-#  (BasicNavigator 가 rclpy.spin 을 내부적으로 쓰기 때문에
-#   별도 Node 로 분리해서 MultiThreadedExecutor 로 같이 돌림)
 # ─────────────────────────────────────────────────────────────────────────────
 class MissionBridge(Node):
     """
@@ -124,9 +129,9 @@ class MissionBridge(Node):
         # ── Publishers ─────────────────────────────────────────────────────
         self.pause_pub = self.create_publisher(Bool, '/mobile_robot_pause', qos)
 
-        # self.initialpose_pub = self.create_publisher(PoseWithCovarianceStamped, '/initialpose', 10)
-        # self.create_subscription(PoseWithCovarianceStamped, '/amcl_pose', self._on_amcl_pose, 10)
-        # self.current_pose = None
+        # [추가] initialpose publisher
+        self.initialpose_pub = self.create_publisher(
+            PoseWithCovarianceStamped, '/initialpose', 10)
 
         gc_qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
@@ -134,8 +139,7 @@ class MissionBridge(Node):
             depth=1
         )
         self.gc_selector_pub = self.create_publisher(
-            String, '/goal_checker_selector', gc_qos
-        )
+            String, '/goal_checker_selector', gc_qos)
 
         # ── Subscribers ────────────────────────────────────────────────────
         self.create_subscription(
@@ -145,38 +149,46 @@ class MissionBridge(Node):
         self.create_subscription(
             Bool, '/scan_done', self._on_scan_done, qos)
 
-        # ── 내부 플래그 ────────────────────────────────────────────────────
-        # 외부(main)에서 읽고 쓰는 플래그들 — threading.Event 사용
-        self.aruco_detected   = threading.Event()  # 마커 감지됨
-        self.alignment_done   = threading.Event()  # 정렬 완료
-        self.scan_done        = threading.Event()  # 스캔 완료
+        # [추가] amcl_pose 구독
+        self.create_subscription(
+            PoseWithCovarianceStamped, '/amcl_pose', self._on_amcl_pose, 10)
 
-        # 마커 감지 후 일정 시간 중복 트리거 방지
+        # ── 내부 플래그 ────────────────────────────────────────────────────
+        self.aruco_detected = threading.Event()
+        self.alignment_done = threading.Event()
+        self.scan_done      = threading.Event()
+
+        # [추가] amcl_pose 저장용
+        self.amcl_lock = threading.Lock()
+        self.amcl_x   = None
+        self.amcl_y   = None
+        self.amcl_yaw = None
+
+        # [추가] 마커쌍 카운터
+        self.marker_pair_idx = 0
+
         self._last_aruco_time = 0.0
-        self._aruco_cooldown  = 5.0  # [s]
+        self._aruco_cooldown  = 5.0
 
     # ── 콜백 ───────────────────────────────────────────────────────────────
 
-    # def _on_amcl_pose(self, msg: PoseWithCovarianceStamped):
-    #     self.current_pose = msg.pose.pose
-
-    # def publish_initialpose(self, pose):
-    #     msg = PoseWithCovarianceStamped()
-    #     msg.header.frame_id = 'map'
-    #     msg.header.stamp = self.get_clock().now().to_msg()
-    #     msg.pose.pose = pose
-    #     msg.pose.covariance[0]  = 0.25
-    #     msg.pose.covariance[7]  = 0.25
-    #     msg.pose.covariance[35] = 0.1
-    #     self.initialpose_pub.publish(msg)
-
+    # [추가] amcl_pose 콜백
+    def _on_amcl_pose(self, msg: PoseWithCovarianceStamped):
+        o = msg.pose.pose.orientation
+        yaw = math.atan2(
+            2.0 * (o.w * o.z + o.x * o.y),
+            1.0 - 2.0 * (o.y * o.y + o.z * o.z))
+        with self.amcl_lock:
+            self.amcl_x   = msg.pose.pose.position.x
+            self.amcl_y   = msg.pose.pose.position.y
+            self.amcl_yaw = yaw
 
     def _on_aruco(self, msg: Bool):
         if not msg.data:
             return
         now = self.get_clock().now().nanoseconds * 1e-9
         if now - self._last_aruco_time < self._aruco_cooldown:
-            return  # 쿨다운 중이면 무시
+            return
         self._last_aruco_time = now
         self.get_logger().info('[MissionBridge] 마커 감지!')
         self.aruco_detected.set()
@@ -192,15 +204,44 @@ class MissionBridge(Node):
             self.scan_done.set()
 
     # ── 헬퍼 ───────────────────────────────────────────────────────────────
+
+    # [추가] initialpose 보정 메서드
+    def correct_pose(self):
+        idx = self.marker_pair_idx
+        if idx not in MARKER_MAP_POSES:
+            self.get_logger().info(
+                f'[Correct] 마커쌍 {idx} 보정 없음 (좌표 미등록)')
+            self.marker_pair_idx += 1
+            return
+
+        mx, my = MARKER_MAP_POSES[idx]
+
+        with self.amcl_lock:
+            yaw = self.amcl_yaw if self.amcl_yaw is not None else 0.0
+
+        msg = PoseWithCovarianceStamped()
+        msg.header.frame_id = 'map'
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.pose.pose.position.x = mx
+        msg.pose.pose.position.y = my
+        msg.pose.pose.orientation = yaw2quaternion(yaw)
+        msg.pose.covariance[0]  = 0.01
+        msg.pose.covariance[7]  = 0.01
+        msg.pose.covariance[35] = 0.005
+
+        self.initialpose_pub.publish(msg)
+        self.get_logger().info(
+            f'[Correct] 마커쌍 {idx} → initialpose ({mx:.3f}, {my:.3f})')
+        self.marker_pair_idx += 1
+
     def publish_pause(self, value: bool):
         msg = Bool()
         msg.data = value
         self.pause_pub.publish(msg)
         self.get_logger().info(
             f'[MissionBridge] /mobile_robot_pause = {value}')
-    
+
     def publish_goal_checker(self, checker_name: str):
-        """GoalChecker 이름 publish"""
         msg = String()
         msg.data = checker_name
         self.gc_selector_pub.publish(msg)
@@ -208,18 +249,16 @@ class MissionBridge(Node):
             f'[MissionBridge] /goal_checker_selector = {checker_name}')
 
     def reset_flags(self):
-        """정렬/스캔 시퀀스 시작 전 플래그 초기화"""
         self.aruco_detected.clear()
         self.alignment_done.clear()
         self.scan_done.clear()
 
     def wait_for_alignment(self):
-        """/alignment_done=true 올 때까지 블로킹 대기"""
         self.alignment_done.wait()
 
     def wait_for_scan(self):
-        """/scan_done=true 올 때까지 블로킹 대기"""
         self.scan_done.wait()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Goalchecker 선택
@@ -227,7 +266,6 @@ class MissionBridge(Node):
 def publish_checker_for_waypoints(bridge: MissionBridge,
                                   all_waypoints: list,
                                   start_idx: int):
-    # 전송할 구간 중 heading-only 전환이 있는지 확인
     has_heading_only = False
     for i in range(start_idx, len(all_waypoints)):
         if i == 0:
@@ -237,7 +275,6 @@ def publish_checker_for_waypoints(bridge: MissionBridge,
             has_heading_only = True
             break
 
-    # heading-only가 포함된 구간이면 precise, 아니면 general
     if has_heading_only:
         bridge.publish_goal_checker(PRECISE_CHECKER_NAME)
     else:
@@ -252,7 +289,6 @@ def split_waypoints_by_checker(all_waypoints: list, start_idx: int) -> list:
     current_segment = []
 
     for i in range(start_idx, len(all_waypoints)):
-        # 첫 waypoint 또는 이전 waypoint가 없는 경우
         if i == 0 or i == start_idx:
             checker = GENERAL_CHECKER_NAME
         else:
@@ -271,27 +307,24 @@ def split_waypoints_by_checker(all_waypoints: list, start_idx: int) -> list:
 
     return segments
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  waypoint 정의
 # ─────────────────────────────────────────────────────────────────────────────
 def build_waypoints(navigator: BasicNavigator) -> list:
-    """
-    주행할 waypoint 리스트 반환.
-    좌표/방향은 실제 환경에 맞게 수정할 것.
-    """
-    half_turn = 1.5708   # 90도
-    a_round   = 3.14     # 180도
+    half_turn = 1.5708
+    a_round   = 3.14
 
     coords = [
         # (x,     y,     yaw)
-        ( 2.8,  0.0,  0.0),            # wp1: 출발지점에서 직진
-        ( 3.76, -4.99, -half_turn),     # wp2: 복도 끝
-        (-0.2,  -2.7,  half_turn),    # wp3: 랙 중앙
-        (-0.2,  -2.7,  0.0),          # wp4: 랙 사이 바라보기
-        ( 3.37, -2.7,  0.0),           # wp5: 1번 랙 끝
-        ( 0.1,  0.0, 0.0),            # wp6: 초기위치
+        # ( 2.8,  0.0,  -half_turn),
+        # ( 3.76, -4.99, -half_turn),
+        # (-0.2,  -2.7,  half_turn),
+        # (-0.2,  -2.7,  0.0),
+        # ( 3.37, -2.7,  0.0),
+        # ( 0.1,  0.0, 0.0),
         #### 자세정렬 테스트용
-        # (3.4, -2.5, 0.0),
+        (3.4, -2.5, 0.0),
     ]
 
     return [make_pose(navigator, x, y, yaw) for x, y, yaw in coords]
@@ -306,11 +339,9 @@ def main():
     navigator = BasicNavigator()
     bridge    = MissionBridge()
 
-    # nav2 준비 대기
     navigator.waitUntilNav2Active()
     time.sleep(1.0)
 
-    # BasicNavigator + MissionBridge 를 멀티스레드로 동시에 spin
     executor = MultiThreadedExecutor()
     executor.add_node(navigator)
     executor.add_node(bridge)
@@ -320,27 +351,19 @@ def main():
 
     bridge.reset_flags()
 
-    # ── 전체 waypoint 리스트 ────────────────────────────────────────────────
     all_waypoints = build_waypoints(navigator)
     next_idx      = 0
 
     print(f'[Mission] 임무 시작: 총 {len(all_waypoints)}개 waypoint')
 
-    # ── 메인 루프 ───────────────────────────────────────────────────────────
     while next_idx < len(all_waypoints):
 
-        # ────────────────────────────────────────────────────────────────────
-        # [추가] GoalChecker 구간 분할 및 순차 실행
-        # heading-only waypoint가 포함된 경우, 구간을 분할하여
-        # 각 구간마다 적절한 GoalChecker를 적용합니다.
-        # ────────────────────────────────────────────────────────────────────
         segments = split_waypoints_by_checker(all_waypoints, next_idx)
 
         if not segments:
             break
 
         for seg_idx, (checker_name, seg_waypoints) in enumerate(segments):
-            # 현재 구간의 global 시작 인덱스 계산
             seg_global_start = next_idx
             for prev_seg in segments[:seg_idx]:
                 seg_global_start += len(prev_seg[1])
@@ -350,35 +373,26 @@ def main():
             print(f'  Waypoints: {seg_global_start + 1}~'
                   f'{seg_global_start + len(seg_waypoints)}/{len(all_waypoints)}')
 
-            # GoalChecker publish
             bridge.publish_goal_checker(checker_name)
-            # BT 노드가 토픽을 수신할 시간 확보
             time.sleep(0.3)
 
-            # timestamp 갱신
             for wp in seg_waypoints:
                 wp.header.stamp = navigator.get_clock().now().to_msg()
 
             bridge.reset_flags()
 
-            # 구간 waypoint 전송
             if len(seg_waypoints) == 1:
-                # 단일 waypoint → goToPose 사용 (heading-only에 적합)
                 navigator.goToPose(seg_waypoints[0])
             else:
-                # 복수 waypoint → followWaypoints 사용
                 navigator.followWaypoints(seg_waypoints)
 
-            # ── 주행 모니터링 루프 ──────────────────────────────────────────
             last_wp_idx = -1
             mission_interrupted = False
 
             while not navigator.isTaskComplete():
 
-                # waypoint 진행 상황 출력
                 feedback = navigator.getFeedback()
                 if feedback is not None:
-                    # followWaypoints 피드백 (current_waypoint 존재)
                     if hasattr(feedback, 'current_waypoint'):
                         cur_wp_in_seg = int(feedback.current_waypoint)
                         global_wp_idx = seg_global_start + cur_wp_in_seg
@@ -395,13 +409,11 @@ def main():
                                   f'y={all_waypoints[global_wp_idx].pose.position.y:.2f})')
                             last_wp_idx = cur_wp_in_seg
 
-                # 마커 감지 여부 체크 (non-blocking)
                 if bridge.aruco_detected.is_set():
                     print('[Mission] ★ 마커 감지! → cancel 후 정렬/스캔 시작')
 
                     bridge.publish_pause(True)
 
-                    # 현재 진행 중인 global index 추적
                     feedback = navigator.getFeedback()
                     if feedback is not None and hasattr(feedback, 'current_waypoint'):
                         next_idx = seg_global_start + int(feedback.current_waypoint)
@@ -415,6 +427,10 @@ def main():
                     print('[Mission] 정렬 완료 대기 중...')
                     bridge.wait_for_alignment()
 
+                    # [추가] 정렬 완료 시점 위치 보정
+                    bridge.correct_pose()
+                    time.sleep(0.5)
+
                     print('[Mission] 스캔 완료 대기 중...')
                     bridge.wait_for_scan()
 
@@ -425,27 +441,30 @@ def main():
                     break
 
             if mission_interrupted:
-                break  # segments 루프 탈출 → while next_idx 루프에서 재시작
+                break
 
-            # 마커 감지가 task 완료 후에 일어난 경우
             if bridge.aruco_detected.is_set():
                 print('[Mission] ★ (task 완료 후) 마커 감지! → 정렬/스캔 시작')
                 navigator.cancelTask()
                 while not navigator.isTaskComplete():
                     time.sleep(0.05)
+
                 print('[Mission] 정렬 완료 대기 중...')
                 bridge.wait_for_alignment()
+
+                # [추가] 정렬 완료 시점 위치 보정
+                bridge.correct_pose()
+                time.sleep(0.5)
+
                 print('[Mission] 스캔 완료 대기 중...')
                 bridge.wait_for_scan()
                 bridge.publish_pause(False)
                 mission_interrupted = True
                 break
 
-            # 구간 정상 완료 확인
             result = navigator.getResult()
             if result == TaskResult.SUCCEEDED:
                 print(f'[Mission] 구간 {seg_idx + 1} 완료 ✓')
-                # 다음 구간으로 계속
             elif result == TaskResult.FAILED:
                 global_wp_idx = seg_global_start
                 print(f'[Failed] wp{global_wp_idx + 1}/{len(all_waypoints)} 실패! → 재시도...')
@@ -456,12 +475,11 @@ def main():
                 pass
 
         else:
-            # 모든 구간이 정상 완료된 경우
             print('[Mission] 모든 waypoint 완료!')
             next_idx = len(all_waypoints)
 
         if mission_interrupted:
-            continue  # while next_idx 루프 재시작
+            continue
 
     print('[Mission] ★★★ 전체 임무 완료 ★★★')
 

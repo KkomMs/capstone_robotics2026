@@ -130,8 +130,8 @@ controller_server:
     general_goal_checker:   # 평소 주행용
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.2
-      yaw_goal_tolerance: 0.75
+      xy_goal_tolerance: 0.35
+      yaw_goal_tolerance: 2.0
     precise_goal_checker:    # 랙 진입용
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
@@ -191,7 +191,7 @@ local_costmap:
       plugins: ["obstacle_layer", "voxel_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.45
+        inflation_radius: 0.38
         cost_scaling_factor: 5.0
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -285,7 +285,7 @@ global_costmap:
         map_subscribe_transient_local: true
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.45  
+        inflation_radius: 0.38  
         cost_scaling_factor: 5.0
       always_send_full_costmap: true
   global_costmap_client:

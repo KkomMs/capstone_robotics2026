@@ -176,13 +176,13 @@ defaults:
       dxl_left_p0_end: 210       # ← 추가
       dxl_left_p1_end: -610      # ← 추가 (기존 dxl_left_p1_end 없으면 추가)
       dxl_left_p2_end: -870
-      dxl_left_end:    -980
+      dxl_left_end:    -970
 
       dxl_right_start:  1470
       dxl_right_p0_end: 1350     # ← 추가
       dxl_right_p1_end:  530     # ← 추가
       dxl_right_p2_end:  270
-      dxl_right_end:     140
+      dxl_right_end:     150
 
       dxl_left_vel_p1:     2
       dxl_left_vel_step:   1     # ← 추가
@@ -196,7 +196,7 @@ defaults:
       dxl_left_p2_step:  10
       dxl_left_p3_step:   3
       dxl_right_p0_step: 40      # ← 추가
-      dxl_right_p2_step: 20
+      dxl_right_p2_step: 10
       dxl_right_p3_step:  5
 
       dxl_left_p2_is_sweep:  false
