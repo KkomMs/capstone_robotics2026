@@ -101,6 +101,15 @@ install(DIRECTORY include/
 )
 
 # ===================================================
+# python install
+#====================================================
+install(PROGRAMS
+  scripts/waypoint_manager.py
+  RENAME waypoint_manager
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+# ===================================================
 # 패키지 설치
 #====================================================
 install(

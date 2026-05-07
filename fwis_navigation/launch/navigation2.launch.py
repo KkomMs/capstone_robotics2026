@@ -41,6 +41,14 @@ def generate_launch_description():
         get_package_share_directory('fwis_navigation'),
         'rviz',
         'rviz_nav2.rviz')
+    
+    waypoint_manager_node = Node(
+        package='fwis_navigation',
+        executable='waypoint_manager',
+        name='waypoint_manager',
+        output='screen',
+        parameters=[param_dir]
+    )
         
     rviz_node = Node(
         package='rviz2',
@@ -80,5 +88,6 @@ def generate_launch_description():
                 'params_file': param_dir,
                 'default_bt_xml_filename': bt_xml_dir}.items(),
         ),
+        #waypoint_manager_node,
         rviz_node,
     ])
