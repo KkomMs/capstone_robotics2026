@@ -113,7 +113,7 @@ install(PROGRAMS
 # 패키지 설치
 #====================================================
 install(
-  DIRECTORY launch map param rviz scripts src
+  DIRECTORY config launch map param rviz scripts src
   DESTINATION share/${PROJECT_NAME}
 )
 
