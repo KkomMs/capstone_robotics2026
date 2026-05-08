@@ -175,7 +175,7 @@ def _launch_setup(context, *args, **kwargs):
         imu_node, 
         stm32_bridge,
         mobile_node,
-        # aligner_node,           # [추가]
+        aligner_node,           # [추가]
         scanner_node,           # [추가]
         dxl_node,               # [추가]
         robot_state_publisher,

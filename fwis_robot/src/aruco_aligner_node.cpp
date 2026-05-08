@@ -1,14 +1,7 @@
 /**
  * aruco_aligner_node.cpp
  *
- * 4WIS 정렬 제어 버전 (C모드 전용)
- *
- * [정렬 흐름]
- * 1개만 보임 → YAW → YAW_SETTLE → X → Z (dist만)
- *     → dist 맞췄는데 아직 1개 → SEARCH (보이는 마커 쪽으로 crab)
- *     → 2개 보이면 → YAW부터 재시작
- *     → YAW → YAW_SETTLE → X → Z (2개, z_diff까지) → 완료
- * 완료 판정은 양쪽 마커 보일 때만
+ * 4WIS 정렬 제어 버전 (C모드 전용, 랙별 파라미터 지원)
  */
 
 #include <algorithm>
@@ -138,7 +131,15 @@ private:
         double x = 0.0, z = 0.0, yaw = 0.0;
     };
 
-    struct MarkerSet { std::vector<int> ids; };
+    // [수정] 랙별 파라미터 추가
+    struct MarkerSet {
+        std::vector<int> ids;
+        double ref_x           = 0.0;
+        double ref_yaw_left    = 0.0;
+        double ref_yaw_right   = 0.0;
+        double target_avg_dist = 0.0;
+        double target_z_diff   = 0.0;
+    };
 
     struct Params {
         double ref_x           = 0.0;
@@ -186,7 +187,6 @@ private:
         double e_z_diff_l = 0.0;
     };
 
-    // ── 파라미터 로드 ──────────────────────────────────────────
     void LoadParams()
     {
         auto g  = [this](const std::string & n){ return this->get_parameter(n).as_double(); };
@@ -235,6 +235,7 @@ private:
         LoadMarkerSequences();
     }
 
+    // [수정] 랙별 ref값 로드
     void LoadMarkerSequences()
     {
         marker_sequences_.clear();
@@ -242,10 +243,41 @@ private:
         try {
             auto lv = this->get_parameter("marker_sequence_left").as_integer_array();
             auto rv = this->get_parameter("marker_sequence_right").as_integer_array();
+
+            // 랙별 ref값 파라미터 로드 (없으면 공통값 사용)
+            std::vector<double> ref_x_list, ref_yaw_left_list, ref_yaw_right_list;
+            std::vector<double> target_avg_dist_list, target_z_diff_list;
+
+            auto load_double_array = [this](const std::string & name,
+                                            std::vector<double> & out,
+                                            size_t n, double default_val) {
+                try {
+                    out = this->get_parameter(name).as_double_array();
+                } catch (...) {
+                    out.assign(n, default_val);
+                    RCLCPP_WARN(this->get_logger(),
+                        "[ArucoAligner] %s 없음 → 공통값 %.4f 사용", name.c_str(), default_val);
+                }
+                // 크기 맞추기
+                while (out.size() < n) out.push_back(default_val);
+            };
+
             size_t n = std::min(lv.size(), rv.size());
+
+            load_double_array("rack_ref_x",           ref_x_list,           n, p_.ref_x);
+            load_double_array("rack_ref_yaw_left",    ref_yaw_left_list,    n, p_.ref_yaw_left);
+            load_double_array("rack_ref_yaw_right",   ref_yaw_right_list,   n, p_.ref_yaw_right);
+            load_double_array("rack_target_avg_dist", target_avg_dist_list, n, p_.target_avg_dist);
+            load_double_array("rack_target_z_diff",   target_z_diff_list,   n, p_.target_z_diff);
+
             for (size_t i = 0; i < n; ++i) {
                 MarkerSet s;
-                s.ids = { static_cast<int>(lv[i]), static_cast<int>(rv[i]) };
+                s.ids              = { static_cast<int>(lv[i]), static_cast<int>(rv[i]) };
+                s.ref_x            = ref_x_list[i];
+                s.ref_yaw_left     = ref_yaw_left_list[i];
+                s.ref_yaw_right    = ref_yaw_right_list[i];
+                s.target_avg_dist  = target_avg_dist_list[i];
+                s.target_z_diff    = target_z_diff_list[i];
                 marker_sequences_.push_back(s);
             }
         } catch (const rclcpp::exceptions::ParameterNotDeclaredException &) {
@@ -253,11 +285,17 @@ private:
         }
         if (marker_sequences_.empty()) {
             MarkerSet s;
-            s.ids = { p_.marker_id_left, p_.marker_id_right };
+            s.ids             = { p_.marker_id_left, p_.marker_id_right };
+            s.ref_x           = p_.ref_x;
+            s.ref_yaw_left    = p_.ref_yaw_left;
+            s.ref_yaw_right   = p_.ref_yaw_right;
+            s.target_avg_dist = p_.target_avg_dist;
+            s.target_z_diff   = p_.target_z_diff;
             marker_sequences_.push_back(s);
         }
     }
 
+    // [수정] 시퀀스 전환 시 랙별 ref값 적용
     void ApplyCurrentSequence()
     {
         if (marker_sequences_.empty()) return;
@@ -266,6 +304,18 @@ private:
             p_.marker_id_left  = s.ids[0];
             p_.marker_id_right = s.ids[1];
         }
+        // 랙별 ref값 적용
+        p_.ref_x           = s.ref_x;
+        p_.ref_yaw_left    = s.ref_yaw_left;
+        p_.ref_yaw_right   = s.ref_yaw_right;
+        p_.target_avg_dist = s.target_avg_dist;
+        p_.target_z_diff   = s.target_z_diff;
+
+        RCLCPP_INFO(this->get_logger(),
+            "[ArucoAligner] 랙 파라미터 적용: ref_x=%.4f ref_yawL=%.4f ref_yawR=%.4f "
+            "avg_dist=%.4f z_diff=%.4f",
+            p_.ref_x, p_.ref_yaw_left, p_.ref_yaw_right,
+            p_.target_avg_dist, p_.target_z_diff);
     }
 
     void LogCurrentSequence()
@@ -319,7 +369,6 @@ private:
         TryStartAlign();
     }
 
-    // 하나만 있어도 시작
     bool ReadyToStart()
     {
         return (l1_.valid && IsFresh(l1_t_)) || (r1_.valid && IsFresh(r1_t_));
@@ -423,7 +472,6 @@ private:
         const bool dist_ok   = std::fabs(e.e_z_avg) < p_.thr_dist;
         const bool diff_ok   = !e.both_visible || (std::fabs(e.e_z_diff) < p_.thr_diff);
 
-        // ── SEARCH phase ─────────────────────────────────────
         if (phase_ == Phase::SEARCH) {
             if (e.both_visible) {
                 RCLCPP_INFO(this->get_logger(),
@@ -436,7 +484,6 @@ private:
                 x_phase_enter_t_     = rclcpp::Time(0, 0, RCL_ROS_TIME);
                 yaw_settle_t_        = rclcpp::Time(0, 0, RCL_ROS_TIME);
             } else {
-                // 보이는 마커 쪽으로 crab 이동
                 double spd = e.left_visible ? p_.min_vy : -p_.min_vy;
                 PublishFixed(kCrabSteerAngles, kSameInwheelSign, spd);
                 RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
@@ -446,7 +493,6 @@ private:
             }
         }
 
-        // ── 일반 phase 전환 ───────────────────────────────────
         if (phase_ == Phase::YAW) {
             yaw_ok_count_ = yaw_enter ? yaw_ok_count_ + 1 : 0;
             if (yaw_ok_count_ >= p_.yaw_ok_required_count) {
@@ -486,7 +532,6 @@ private:
             RCLCPP_WARN(this->get_logger(), "[ArucoAligner] X중 yaw 틀어짐 → YAW");
         }
 
-        // Z phase에서 dist OK인데 1개만 보이면 SEARCH
         if (phase_ == Phase::Z && dist_ok && !e.both_visible) {
             RCLCPP_INFO(this->get_logger(),
                 "[ArucoAligner] Z dist OK but 1개만 보임 → SEARCH");
@@ -495,14 +540,13 @@ private:
             return;
         }
 
-        // 완료 판정: 양쪽 마커 보일 때만
         const bool all_ok = yaw_ok && center_ok && dist_ok && diff_ok && e.both_visible;
         stable_count_ = all_ok ? stable_count_ + 1 : 0;
 
-        const char * ps = (phase_==Phase::YAW)    ? "YAW"
+        const char * ps = (phase_==Phase::YAW)       ? "YAW"
                         : (phase_==Phase::YAW_SETTLE) ? "YSET"
-                        : (phase_==Phase::X)       ? "X"
-                        : (phase_==Phase::Z)       ? "Z"
+                        : (phase_==Phase::X)          ? "X"
+                        : (phase_==Phase::Z)          ? "Z"
                         : "SRCH";
         RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 250,
             "[ALIGN|%s|%s] eYL=%+.4f eYR=%+.4f(%s) eX=%+.4f(%s) "

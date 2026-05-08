@@ -6,22 +6,22 @@ defaults:
     common_frames: &common_frames
       base_frame_id: "base_footprint"
       odom_frame_id: "odom"
-      front_left_steer_joint:  "drive1_axis_joint"      # [FL 조향 모터]
-      front_right_steer_joint: "drive2_axis_joint"      # [FR 조향 모터]
-      rear_left_steer_joint:   "drive3_axis_joint"      # [RL 조향 모터]
-      rear_right_steer_joint:  "drive4_axis_joint"      # [RR 조향 모터]
-      front_left_inwheel_joint:  "motor1_axis_joint"    # [FL 인휠 모터]
-      front_right_inwheel_joint: "motor2_axis_joint"    # [FR 인휠 모터]
-      rear_left_inwheel_joint:   "motor3_axis_joint"    # [RL 인휠 모터]
-      rear_right_inwheel_joint:  "motor4_axis_joint"    # [RR 인휠 모터]
+      front_left_steer_joint:  "drive1_axis_joint"
+      front_right_steer_joint: "drive2_axis_joint"
+      rear_left_steer_joint:   "drive3_axis_joint"
+      rear_right_steer_joint:  "drive4_axis_joint"
+      front_left_inwheel_joint:  "motor1_axis_joint"
+      front_right_inwheel_joint: "motor2_axis_joint"
+      rear_left_inwheel_joint:   "motor3_axis_joint"
+      rear_right_inwheel_joint:  "motor4_axis_joint"
 
     # ───────── Kinematics / Geometry ─────────
       common_geom: &common_geom
-        wheel_radius: 0.0695          # [m]
-        wheel_x_offset: 0.215         # [m] 로봇 중심 -> 바퀴 중심 (전후)
-        wheel_y_offset: 0.215         # [m] 로봇 중심 -> 바퀴 중심 (좌우)
-        wheel_max_rpm: 560.0          # [rpm] 인휠 모터 최대 rpm
-        steer_max_rpm: 65.0           # [rpm] 조향 모터 최대 rpm
+        wheel_radius: 0.0695
+        wheel_x_offset: 0.215
+        wheel_y_offset: 0.215
+        wheel_max_rpm: 560.0
+        steer_max_rpm: 65.0
 
     # ───────── Controller ─────────
       common_ctrl: &common_ctrl
@@ -38,7 +38,7 @@ defaults:
         lpf_angular: 0.0
         limit_linear_abs: 0.7
         limit_angular_abs: 1.5
-        deadband_threshold: 0.05      # 모터 피드백 Deadband 임계값
+        deadband_threshold: 0.05
 
     # ───────── Motor Profile ─────────
     common_profile: &common_profile
@@ -71,32 +71,20 @@ defaults:
       imu_publish_rate: 50.0
 
     # ═══════════════════════════════════════════════════════════
-    # [추가] COMMON: ArUco 자세 정렬기 (C/D 모드 공통)
+    # COMMON: ArUco 자세 정렬기 (C모드)
     # ═══════════════════════════════════════════════════════════
     common_aligner: &common_aligner
 
-      alignment_mode: "C"   # "C": 좌우 마커 1개씩 / "D": 좌우 마커 2개씩
+      alignment_mode: "C"
 
-      # ── C 모드 ──────────────────────────────────────────────
-      ref_x:           -0.028
-      ref_yaw_left:     0.010
+      # ── C 모드 기준값 ────────────────────────────────────────
+      ref_x:           -0.024
+      ref_yaw_left:     0.007
       ref_yaw_right:   -0.005
-      target_avg_dist:  0.606
-      target_z_diff:    0.018
+      target_avg_dist:  0.597
+      target_z_diff:    0.014
       marker_id_left:  2
       marker_id_right: 1
-
-      # ── D 모드 ──────────────────────────────────────────────
-      marker_id_d_l1: 4
-      marker_id_d_l2: 3
-      marker_id_d_r1: 2
-      marker_id_d_r2: 1
-      ref_yaw_d:            -0.017
-      ref_x_d_left:         -0.0652
-      ref_x_d_right:        -0.0297
-      target_avg_dist_d:     0.6203
-      target_z_diff_d_left:  -0.0188
-      target_z_diff_d_right: -0.0017
 
       # ── PID 게인 ────────────────────────────────────────────
       kp_w:    3.0
@@ -113,14 +101,14 @@ defaults:
       min_vy: 0.13
 
       # ── 수렴 임계값 ──────────────────────────────────────────
-      thr_yaw:         0.020
-      thr_center:      0.015
+      thr_yaw:         0.018
+      thr_center:      0.010
       thr_dist:        0.015
-      thr_diff:        0.015
+      thr_diff:        0.010
       required_stable: 3
 
       # ── 페이즈 전환 ──────────────────────────────────────────
-      thr_yaw_enter_x:       0.018
+      thr_yaw_enter_x:       0.015
       thr_yaw_back_to_yaw:   0.030
       yaw_ok_required_count: 3
       x_phase_min_hold_time: 0.7
@@ -128,7 +116,7 @@ defaults:
       # ── YAW 브레이크 ─────────────────────────────────────────
       yaw_brake_band:            0.03
       yaw_brake_max_w:           0.05
-      yaw_settle_time:           0.20
+      yaw_settle_time:           0.50
       yaw_settle_required_count: 2
 
       # ── 마커 필터 ────────────────────────────────────────────
@@ -143,7 +131,7 @@ defaults:
       sign_diff: +1.0
 
       # ── 스티어 동기화 ────────────────────────────────────────
-      steer_position_tolerance: 5.0
+      steer_position_tolerance: 1.5
 
       # ── 내부 모터 제어용 기구학 ──────────────────────────────
       wheel_radius:     0.0695
@@ -159,7 +147,7 @@ defaults:
       inwheel_min_rpm:     5.0
 
     # ═══════════════════════════════════════════════════════════
-    # [추가] COMMON: 다이나믹셀 스캔 모터
+    # COMMON: 다이나믹셀 스캔 모터
     # ═══════════════════════════════════════════════════════════
     common_dynamixel: &common_dynamixel
 
@@ -169,33 +157,33 @@ defaults:
       dxl_left_id:  6
       dxl_right_id: 7
 
-      dxl_left_scanner_id:  1    # ← 추가
-      dxl_right_scanner_id: 2    # ← 추가
+      dxl_left_scanner_id:  1
+      dxl_right_scanner_id: 2
 
       dxl_left_start:  330
-      dxl_left_p0_end: 210       # ← 추가
-      dxl_left_p1_end: -610      # ← 추가 (기존 dxl_left_p1_end 없으면 추가)
+      dxl_left_p0_end: 210
+      dxl_left_p1_end: -610
       dxl_left_p2_end: -870
       dxl_left_end:    -970
 
       dxl_right_start:  1470
-      dxl_right_p0_end: 1350     # ← 추가
-      dxl_right_p1_end:  530     # ← 추가
+      dxl_right_p0_end: 1350
+      dxl_right_p1_end:  530
       dxl_right_p2_end:  270
       dxl_right_end:     150
 
       dxl_left_vel_p1:     2
-      dxl_left_vel_step:   1     # ← 추가
+      dxl_left_vel_step:   1
       dxl_left_vel_return: 10
 
       dxl_right_vel_p1:     4
-      dxl_right_vel_step:   1    # ← 추가
+      dxl_right_vel_step:   1
       dxl_right_vel_return: 10
 
-      dxl_left_p0_step:  40      # ← 추가
+      dxl_left_p0_step:  40
       dxl_left_p2_step:  10
       dxl_left_p3_step:   3
-      dxl_right_p0_step: 40      # ← 추가
+      dxl_right_p0_step: 40
       dxl_right_p2_step: 10
       dxl_right_p3_step:  5
 
@@ -225,20 +213,24 @@ imu_node:
     <<: *common_imu
 
 # ─────────────────────────────────────────────────────────────────────────────
-# [추가] aruco_aligner_node
+# aruco_aligner_node
 # ─────────────────────────────────────────────────────────────────────────────
 aruco_aligner_node:
   ros__parameters:
     <<: *common_aligner
-    marker_sequence_d_l1: [4,  8,  12]
-    marker_sequence_d_l2: [3,  7,  11]
-    marker_sequence_d_r1: [2,  6,  10]
-    marker_sequence_d_r2: [1,  5,   9]
     marker_sequence_left:  [2, 4, 6, 8, 10]
     marker_sequence_right: [1, 3, 5, 7, 9]
 
+    # ── 랙별 ref값 (순서: 랙1, 랙2, 랙3, 랙4, 랙5) ──────────────
+    # 랙3~5는 측정값 없어서 임시로 랙1값 사용 → 측정 후 교체
+    rack_ref_x:           [-0.024, -0.030, -0.030, -0.030, -0.030]
+    rack_ref_yaw_left:    [ 0.007, -0.010,  0.007,  0.007,  0.007]
+    rack_ref_yaw_right:   [-0.005, -0.012, -0.005, -0.005, -0.005]
+    rack_target_avg_dist: [ 0.597,  0.590,  0.597,  0.597,  0.597]
+    rack_target_z_diff:   [ 0.014,  0.014,  0.014,  0.014,  0.014]
+
 # ─────────────────────────────────────────────────────────────────────────────
-# [추가] zebra_scanner_node
+# zebra_scanner_node
 # ─────────────────────────────────────────────────────────────────────────────
 zebra_scanner_node:
   ros__parameters:
@@ -249,7 +241,7 @@ zebra_scanner_node:
     aruco_dict_id:    10
 
 # ─────────────────────────────────────────────────────────────────────────────
-# [추가] dynamixel_scan_node
+# dynamixel_scan_node
 # ─────────────────────────────────────────────────────────────────────────────
 dynamixel_scan_node:
   ros__parameters:
