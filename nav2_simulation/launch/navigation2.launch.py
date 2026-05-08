@@ -26,14 +26,6 @@ def generate_launch_description():
             pkg_dir,
             'param',
             param_file_name))
-    
-    bt_xml_file_name = 'my_nav2_replanning_and_recovery.xml'
-    bt_xml_dir = LaunchConfiguration(
-        'default_bt_xml_filename',
-        default=os.path.join(
-            pkg_dir,
-            'config',
-            bt_xml_file_name))
 
     nav2_launch_file_dir = os.path.join(get_package_share_directory('nav2_bringup'), 'launch')
 
@@ -71,11 +63,6 @@ def generate_launch_description():
             description='Full path to param file to load'),
 
         DeclareLaunchArgument(
-            'default_bt_xml_filename',
-            default_value=bt_xml_dir,
-            description='Full path to the behavior tree xml file to use'),
-
-        DeclareLaunchArgument(
             'use_sim_time',
             default_value='true',
             description='Use simulation (Gazebo) clock if true'),
@@ -85,8 +72,7 @@ def generate_launch_description():
             launch_arguments={
                 'map': map_dir,
                 'use_sim_time': use_sim_time,
-                'params_file': param_dir,
-                'default_bt_xml_filename': bt_xml_dir}.items(),
+                'params_file': param_dir}.items()
         ),
         waypoint_manager_node,
         rviz_node,

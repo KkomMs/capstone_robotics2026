@@ -142,7 +142,7 @@ install(FILES global_planner_plugin.xml
 # 패키지 설치
 #====================================================
 install(
-  DIRECTORY launch map param rviz src
+  DIRECTORY config launch map param rviz src
   DESTINATION share/${PROJECT_NAME}
 )
 

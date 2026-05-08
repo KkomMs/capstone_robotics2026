@@ -66,7 +66,7 @@ bt_navigator:
     global_frame: map
     robot_base_frame: base_footprint
     odom_topic: /odom
-    # default_bt_xml_filename: "my_nav2_replanning_and_recovery.xml"
+    default_nav_to_pose_bt_xml: "$(find-pkg-share nav2_simulation)/config/my_nav2_replanning_and_recovery.xml"
     bt_loop_duration: 10
     default_server_timeout: 20
     enable_groot_monitoring: True
@@ -106,7 +106,11 @@ bt_navigator:
     - nav2_goal_checker_selector_bt_node
     - nav2_smooth_path_action_bt_node
 
-bt_navigator_rclcpp_node:
+bt_navigator_navigate_through_poses_rclcpp_node:
+  ros__parameters:
+    use_sim_time: True
+
+bt_navigator_navigate_to_pose_rclcpp_node:
   ros__parameters:
     use_sim_time: True
 
@@ -124,7 +128,7 @@ controller_server:
     # - xy_goal_tolerance: [m] 해당 반경 안에 들어오면 도착으로 간주.
     # - yaw_goal_tolerance: [rad] 해당 각도 차이 이내면 정렬된 것으로 간주.
     progress_checker_plugin: "progress_checker"
-    goal_checker_plugin: ["general_goal_checker", "precise_goal_checker"]
+    goal_checker_plugins: ["general_goal_checker", "precise_goal_checker"]
     controller_plugins: ["FollowPath"]
     # Progress checker parameters
     progress_checker:
@@ -134,19 +138,19 @@ controller_server:
     general_goal_checker:   # 평소 주행용
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.2
+      xy_goal_tolerance: 0.25
       yaw_goal_tolerance: 0.85
     precise_goal_checker:    # 랙 진입용
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
       xy_goal_tolerance: 0.1
-      yaw_goal_tolerance: 0.08
+      yaw_goal_tolerance: 0.1
     # Controller parameters
     FollowPath:
       plugin: "mpc_ufrws_controller::MpcUFRWSController"
       # ── MPC 파라미터 ───────────────────────────
-      desired_linear_vel: 0.4
-      desired_angular_vel: 0.7
+      desired_linear_vel: 0.23
+      desired_angular_vel: 0.5
       lookahead_dist: 0.3
       control_period: 0.01         # 100 [Hz]
       prediction_horizon: 10       # 예측 구간
@@ -173,10 +177,6 @@ controller_server:
       slowdown_ratio: 0.7             # 감속 비율
       # ── TF ───────────────────────────────────
       transform_tolerance: 0.1
-
-controller_server_rclcpp_node:
-  ros__parameters:
-    use_sim_time: True
 
 local_costmap:
   local_costmap:
@@ -320,10 +320,6 @@ planner_server:
     #   allow_unknown: True
     #   tolerance: 1.0
 
-planner_server_rclcpp_node:
-  ros__parameters:
-    use_sim_time: True
-
 smoother_server:
   ros__parameters:
     use_sim_time: True
@@ -333,24 +329,28 @@ smoother_server:
       tolerance: 1.0e-10
       max_its: 1000
       do_refinement: True
-      check_for_collisions: True 
-      cost_check_patience: 2.0
+      # check_for_collisions: True 
+      # cost_check_patience: 2.0
 
-recoveries_server:
+behavior_server:
   ros__parameters:
     costmap_topic: local_costmap/costmap_raw
     footprint_topic: local_costmap/published_footprint
     cycle_frequency: 10.0
-    recovery_plugins: ["spin", "backup", "wait"]
+    behavior_plugins: ["spin", "backup", "drive_on_heading", "assisted_teleop", "wait"]
     spin:
-      plugin: "nav2_recoveries/Spin"
+      plugin: "nav2_behaviors/Spin"
     backup:
-      plugin: "nav2_recoveries/BackUp"
+      plugin: "nav2_behaviors/BackUp"
+    drive_on_heading:
+      plugin: "nav2_behaviors/DriveOnHeading"
     wait:
-      plugin: "nav2_recoveries/Wait"
+      plugin: "nav2_behaviors/Wait"
+    assisted_teleop:
+      plugin: "nav2_behaviors/AssistedTeleop"
     global_frame: odom
     robot_base_frame: base_footprint
-    transform_timeout: 0.1
+    transform_tolerance: 0.1
     use_sim_time: true
     simulate_ahead_time: 2.0
     max_rotational_vel: 1.0
