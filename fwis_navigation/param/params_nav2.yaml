@@ -145,8 +145,8 @@ controller_server:
     FollowPath:
       plugin: "mpc_ufrws_controller::MpcUFRWSController"
       # ── MPC 파라미터 ───────────────────────────
-      desired_linear_vel: 0.23
-      desired_angular_vel: 0.45
+      desired_linear_vel: 0.25
+      desired_angular_vel: 0.50
       lookahead_dist: 0.3
       control_period: 0.02         # 50 [Hz]
       prediction_horizon: 10       # 예측 구간
@@ -167,10 +167,11 @@ controller_server:
       opt_xtol_rel: 1.0e-6        # 변수 상대 수렴 허용치
       opt_grad_eps: 1.0e-5        # 유한 차분 스텝 크기
       # ── 장애물 회피 파라미터 ────────────────────────────
-      Q_obs_critical: 1000.0          # 충돌 임박 영역 가중치
-      Q_obs_repulsion: 40.0           # inflation 영역 반발 가중치
+      Q_obs_critical: 500.0           # 충돌 임박 영역 가중치
+      Q_obs_repulsion: 5.0            # inflation 영역 반발 가중치
       use_footprint_collision: true   # footprint 기반 충돌 검사 사용 유무
-      slowdown_ratio: 0.6             # 감속 비율
+      slowdown_ratio: 0.8             # 감속 비율
+      lethal_check_steps: 3           # MPC 출력 후 LETHAL 검증 스텝 수
       # ── TF ───────────────────────────────────
       transform_tolerance: 0.1
 
@@ -191,8 +192,8 @@ local_costmap:
       plugins: ["obstacle_layer", "voxel_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.48
-        cost_scaling_factor: 4.0
+        inflation_radius: 0.40
+        cost_scaling_factor: 6.0
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: true
@@ -285,8 +286,8 @@ global_costmap:
         map_subscribe_transient_local: true
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.48  
-        cost_scaling_factor: 4.0
+        inflation_radius: 0.40  
+        cost_scaling_factor: 6.0
       always_send_full_costmap: true
   global_costmap_client:
     ros__parameters:
