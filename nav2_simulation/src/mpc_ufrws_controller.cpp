@@ -126,13 +126,15 @@ void MpcUFRWSController::configure(
 
   // ── 장애물 회피 파라미터 ────────────────────────────────────────────────────
   declare_parameter_if_not_declared(node, plugin_name_ + ".Q_obs_critical",
-    rclcpp::ParameterValue(5000.0));
+    rclcpp::ParameterValue(500.0));
   declare_parameter_if_not_declared(node, plugin_name_ + ".Q_obs_repulsion",
-    rclcpp::ParameterValue(50.0));
+    rclcpp::ParameterValue(5.0));
   declare_parameter_if_not_declared(node, plugin_name_ + ".use_footprint_collision",
     rclcpp::ParameterValue(true));
   declare_parameter_if_not_declared(node, plugin_name_ + ".slowdown_ratio",
-    rclcpp::ParameterValue(0.3));
+    rclcpp::ParameterValue(0.7));
+  declare_parameter_if_not_declared(node, plugin_name_ + ".lethal_check_steps",
+    rclcpp::ParameterValue(3));
 
   // ── TF ───────────────────────────────────────────────────────────────────────
   declare_parameter_if_not_declared(node, plugin_name_ + ".transform_tolerance",
@@ -178,6 +180,7 @@ void MpcUFRWSController::configure(
   node->get_parameter(plugin_name_ + ".Q_obs_repulsion",          Q_obs_repulsion_);
   node->get_parameter(plugin_name_ + ".use_footprint_collision",  use_footprint_collision_);
   node->get_parameter(plugin_name_ + ".slowdown_ratio",           slowdown_ratio_);
+  node->get_parameter(plugin_name_ + ".lethal_check_steps",       lethal_check_steps_);
 
   double transform_tolerance{0.1};
   node->get_parameter(plugin_name_ + ".transform_tolerance", transform_tolerance);
@@ -213,9 +216,9 @@ void MpcUFRWSController::configure(
     "[MpcUFRWSController] Configured. "
     "L=%.3f m, W=%.3f m, V_ref=%.2f m/s, N=%d, dt=%.2f s, "
     "max_steer=%.1f deg, optimizer=NLopt::LD_SLSQP, max_eval=%d, "
-    "Q_obs_critical=%.1f, Q_obs_repulsion=%.1f",
+    "Q_obs_critical=%.1f, Q_obs_repulsion=%.1f, slowdown_ratio=%.1f",
     L_, W_, V_ref_, N_, dt_, max_steer_deg, opt_max_eval_,
-    Q_obs_critical_, Q_obs_repulsion_);
+    Q_obs_critical_, Q_obs_repulsion_, slowdown_ratio_);
 
   // ── 타이머 ───────────────────────────────────────────────────────────
   last_cmd_time_ = clock_->now();
@@ -412,18 +415,22 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   }
 
   // ── 6. 장애물 회피를 위한 속도 조절 ────────────────────────────────────────────
-  // double max_cost_ahead = 0.0;
-  // for (const auto & target_state : target_seq) {
-  //   double cost = use_footprint_collision_ ? footprintCostmapCost(target_state) : costmapCost(target_state.x, target_state.y);
-  //   max_cost_ahead = std::max(max_cost_ahead, cost);
-  // }
+  const bool lethal_now = isFootprintLethal(current_state);
+  // LETHAL 긴급 정지
+  if (lethal_now) {
+    RCLCPP_WARN(logger_,
+      "LETHAL obstacle at current footprint! Emergency stop + replan.");
+    throw nav2_core::PlannerException(
+      "Emergency stop: LETHAL obstacle at current robot footprint");
+  }
 
-  // if (max_cost_ahead >= 0.9) {
-  //   current_v_ref_ = 0.0;     // 충돌 위험 시 정지
-  // } else if (max_cost_ahead > 0.2) {    // 거리에 비례하여 감속
-  //   double penalty_ratio = (max_cost_ahead - 0.2) / 0.6;
-  //   current_v_ref_ = current_v_ref_ * (1.0 - penalty_ratio * (1.0 - slowdown_ratio_));
-  // }
+  const double cost_now = use_footprint_collision_ ? footprintCostmapCost(current_state) : costmapCost(current_state.x, current_state.y);
+  if (cost_now >= 0.90) {
+    // INSCRIBED 근처 감속
+    current_v_ref_ = V_ref_ * slowdown_ratio_;
+    RCLCPP_DEBUG(logger_,
+      "Near INSCRIBED (cost=%.2f). Slowing to %.2f m/s", cost_now, current_v_ref_);
+  }
   
   // ── 7. NLopt 최적화 ────────────────────────────────────────────────────────
   const std::vector<double> optimal_u = optimizeMPC(current_state, target_seq);
@@ -439,7 +446,24 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   u0_[u0_.size() - 2] = 0.0;
   u0_[u0_.size() - 1] = 0.0;
 
-  // ── 9. 최종 cmd_vel 계산 ────────────────────────────────────────
+  // ── 9. 궤적 LETHAL 충돌 검증 ──────────────────────────────────────────────
+  VehicleState check_state = current_state;
+  const int check_steps = std::min(lethal_check_steps_, static_cast<int>(optimal_u.size() / 2));
+
+  for (int i = 0; i < check_steps; ++i) {
+    const double df = optimal_u[static_cast<size_t>(i) * 2];
+    const double dr = optimal_u[static_cast<size_t>(i) * 2 + 1];
+    check_state = ufrwsModel(check_state, df, dr);
+
+    if (isFootprintLethal(check_state)) {
+      RCLCPP_WARN(logger_,
+        "Predicted LETHAL collision at step %d. Emergency stop + replan.", i + 1);
+        throw nav2_core::PlannerException(
+          "Emergency stop: Predicted LETHAL collision in trajectory");
+    }
+  }
+
+  // ── 10. 최종 cmd_vel 계산 ────────────────────────────────────────
   const WheelAngles steer = computeWheelAngles(delta_f, delta_r);
   const WheelVelocities vel = computeWheelVelocities(delta_f, delta_r);
 
@@ -487,9 +511,11 @@ double MpcUFRWSController::costmapCost(double wx, double wy) const
 
   const unsigned char cost = costmap_->getCost(mx, my);
 
-  if (cost == nav2_costmap_2d::LETHAL_OBSTACLE ||
-      cost == nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE) {
-    return 1.0;   // 253, 254
+  if (cost == nav2_costmap_2d::LETHAL_OBSTACLE) {
+    return 1.0; 
+  }
+  if (cost == nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE) {
+    return 0.95;
   }
   if (cost == nav2_costmap_2d::NO_INFORMATION) {
     return 0.0;
@@ -506,10 +532,10 @@ double MpcUFRWSController::footprintCostmapCost(const VehicleState & state) cons
 
   const double cos_th = std::cos(state.theta);
   const double sin_th = std::sin(state.theta);
-
   const double half_w = W_ / 2.0;
+
   const std::array<std::pair<double, double>, 4> corners = {{
-    { Lf_,  half_w},
+    { Lf_,  half_w},    // [todo] wheelbase말고 실제 footprint로 변경할지 생각해보기
     { Lf_, -half_w},
     {-Lr_,  half_w},
     {-Lr_, -half_w},
@@ -522,6 +548,46 @@ double MpcUFRWSController::footprintCostmapCost(const VehicleState & state) cons
   }
 
   return max_cost;
+}
+
+// ── LETHAL과 footprint 충돌 검사 ───────────────────────────────────────────
+bool MpcUFRWSController::isFootprintLethal(const VehicleState & state) const
+{
+  if (!costmap_) return false;
+
+  // 로봇 중심
+  unsigned int mx, my;
+  if (costmap_->worldToMap(state.x, state.y, mx, my)) {
+    if (costmap_->getCost(mx, my) == nav2_costmap_2d::LETHAL_OBSTACLE) {
+      return true;
+    }
+  }
+
+  // footprint
+  const double cos_th = std::cos(state.theta);
+  const double sin_th = std::sin(state.theta);
+  const double half_w = W_ / 2.0;
+
+  const std::array<std::pair<double, double>, 4> corners = {{
+    { Lf_,  half_w},    // [todo] wheelbase말고 실제 footprint로 변경할지 생각해보기
+    { Lf_, -half_w},
+    {-Lr_,  half_w},
+    {-Lr_, -half_w},
+  }};
+
+  for (const auto & [lx, ly] : corners) {
+    const double gx = state.x + cos_th * lx - sin_th * ly;
+    const double gy = state.y + sin_th * lx + cos_th * ly;
+
+    unsigned int mx, my;
+    if (costmap_->worldToMap(gx, gy, mx, my)) {
+      if (costmap_->getCost(mx, my) == nav2_costmap_2d::LETHAL_OBSTACLE) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 // ── 궤적 충돌 검증 ─────────────────────────────────────────────────────────
@@ -581,15 +647,14 @@ double MpcUFRWSController::mpcCost(
     if (costmap_) {
       max_cost = use_footprint_collision_ ? footprintCostmapCost(state) : costmapCost(state.x, state.y);
 
-      // 장애물이 인식되면 횡방향 오차 가중치 낮춤
-      if (max_cost > 0.2) {
-        dynamic_Q_y *= 0.1;
+      // INSCRIBED(0.95) 이상에서는 Q_y 약간 완화
+      if (max_cost >= 0.95) {
+        dynamic_Q_y *= 0.3;
       }
     }
 
     // 상태 비용
-    //cost += dynamic_Q_y  * e_y   * e_y;
-    cost += Q_y_ * e_y * e_y;
+    cost += dynamic_Q_y  * e_y   * e_y;
     cost += Q_phi_ * e_phi * e_phi;
 
     // 제어량 크기 비용 (조향각이 불필요하게 커지는 것 억제)
@@ -604,13 +669,15 @@ double MpcUFRWSController::mpcCost(
     prev_dr = delta_r;
     
     // 장애물 비용
-    // if ((Q_obs_critical_ > 0.0 || Q_obs_repulsion_ > 0.0) && costmap_) {
-    //   if (max_cost >= 0.8) {
-    //     cost += Q_obs_critical_ * max_cost * max_cost;
-    //   } else if (max_cost > 0.0) {
-    //     cost += Q_obs_repulsion_ * max_cost * max_cost;
-    //   }
-    // }
+    if ((Q_obs_critical_ > 0.0 || Q_obs_repulsion_ > 0.0) && costmap_) {
+      if (max_cost >= 1.0) {
+        // LETHAL 충돌: 강한 페널티
+        cost += Q_obs_critical_ * max_cost * max_cost;
+      } else if (max_cost > 0.05) {
+        // 중앙 유도
+        cost += Q_obs_repulsion_ * max_cost;
+      }
+    }
   }
 
   return cost;

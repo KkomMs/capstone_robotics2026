@@ -121,7 +121,7 @@ controller_server:
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.001
     min_theta_velocity_threshold: 0.001
-    failure_tolerance: 0.3
+    failure_tolerance: 0.2
     # progress_checker: 진행 확인. 로봇이 어딘가에 끼어서 못 움직이는지 감시.
     # - movement_time_allowance: 해당 시간안에 벗어나지 못하면 진행 불가로 판단. 복구 행동 호출.
     # goal_checker: 목표 도달 확인. 로봇이 목표점에 도착했는지 판단.
@@ -138,23 +138,23 @@ controller_server:
     general_goal_checker:   # 평소 주행용
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.25
-      yaw_goal_tolerance: 0.85
+      xy_goal_tolerance: 0.15
+      yaw_goal_tolerance: 0.8
     precise_goal_checker:    # 랙 진입용
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.1
+      xy_goal_tolerance: 0.15
       yaw_goal_tolerance: 0.1
     # Controller parameters
     FollowPath:
       plugin: "mpc_ufrws_controller::MpcUFRWSController"
       # ── MPC 파라미터 ───────────────────────────
-      desired_linear_vel: 0.23
+      desired_linear_vel: 0.25
       desired_angular_vel: 0.5
       lookahead_dist: 0.3
-      control_period: 0.01         # 100 [Hz]
+      control_period: 0.02         # 50 [Hz]
       prediction_horizon: 10       # 예측 구간
-      max_steer_angle: 180.0        # [deg]
+      max_steer_angle: 180.0       # [deg]
       # ── 주행 모드  ─────────────────────────────
       reversing_mode: false         # 후진 모드
       point_turning_mode: true    # 제자리 회전 모드
@@ -171,10 +171,11 @@ controller_server:
       opt_xtol_rel: 1.0e-6        # 변수 상대 수렴 허용치
       opt_grad_eps: 1.0e-5        # 유한 차분 스텝 크기
       # ── 장애물 회피 파라미터 ─────────────────────
-      Q_obs_critical: 1000.0          # 충돌 임박 영역 가중치
-      Q_obs_repulsion: 40.0           # inflation 영역 반발 가중치
-      use_footprint_collision: false   # footprint 기반 충돌 검사 사용 유무
-      slowdown_ratio: 0.7             # 감속 비율
+      Q_obs_critical: 500.0           # 충돌 임박 영역 가중치
+      Q_obs_repulsion: 5.0            # inflation 영역 반발 가중치
+      use_footprint_collision: true   # footprint 기반 충돌 검사 사용 유무
+      slowdown_ratio: 0.8             # 감속 비율
+      lethal_check_steps: 3           # MPC 출력 후 LETHAL 검증 스텝 수
       # ── TF ───────────────────────────────────
       transform_tolerance: 0.1
 
@@ -191,12 +192,12 @@ local_costmap:
       height: 3
       resolution: 0.05
       transform_tolerance: 1.0
-      footprint: "[[0.30, 0.30], [0.30, -0.30], [-0.30, -0.30], [-0.30, 0.30]]"
+      footprint: "[[0.32, 0.32], [0.32, -0.32], [-0.32, -0.32], [-0.32, 0.32]]"
       plugins: ["obstacle_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.75
-        cost_scaling_factor: 3.0
+        inflation_radius: 0.40
+        cost_scaling_factor: 6.0
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: true
@@ -227,7 +228,7 @@ global_costmap:
       global_frame: map
       robot_base_frame: base_footprint
       use_sim_time: True                   # add
-      footprint: "[[0.30, 0.30], [0.30, -0.30], [-0.30, -0.30], [-0.30, 0.30]]"
+      footprint: "[[0.32, 0.32], [0.32, -0.32], [-0.32, -0.32], [-0.32, 0.32]]"
       resolution: 0.05
       track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "voxel_layer", "inflation_layer"]
@@ -270,8 +271,8 @@ global_costmap:
         map_subscribe_transient_local: true
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.75  
-        cost_scaling_factor: 3.0
+        inflation_radius: 0.40  
+        cost_scaling_factor: 6.0
       always_send_full_costmap: true
   global_costmap_client:
     ros__parameters:
@@ -307,7 +308,7 @@ planner_server:
       max_iterations: 1000000               # maximum total iterations to search for before failing (in case unreachable), set to -1 to disable
       max_on_approach_iterations: 1000      # maximum number of iterations to attempt to reach goal once in tolerance
       max_planning_time: 2.0                # max time in s for planner to plan, smooth
-      cost_travel_multiplier: 4.0           # Cost multiplier to apply to search to steer away from high cost areas. Larger values will place in the center of aisles more exactly (if non-`FREE` cost potential field exists) but take slightly longer to compute. To optimize for speed, a value of 1.0 is reasonable. A reasonable tradeoff value is 2.0. A value of 0.0 effective disables steering away from obstacles and acts like a naive binary search A*.
+      cost_travel_multiplier: 8.5           # Cost multiplier to apply to search to steer away from high cost areas. Larger values will place in the center of aisles more exactly (if non-`FREE` cost potential field exists) but take slightly longer to compute. To optimize for speed, a value of 1.0 is reasonable. A reasonable tradeoff value is 2.0. A value of 0.0 effective disables steering away from obstacles and acts like a naive binary search A*.
       use_final_approach_orientation: false # Whether to set the final path pose at the goal's orientation to the requested orientation (false) or in line with the approach angle so the robot doesn't rotate to heading (true)
       smoother:
         max_iterations: 1000
@@ -353,9 +354,9 @@ behavior_server:
     transform_tolerance: 0.1
     use_sim_time: true
     simulate_ahead_time: 2.0
-    max_rotational_vel: 1.0
+    max_rotational_vel: 0.5
     min_rotational_vel: 0.4
-    rotational_acc_lim: 3.2
+    rotational_acc_lim: 2.0
 
 robot_state_publisher:
   ros__parameters:

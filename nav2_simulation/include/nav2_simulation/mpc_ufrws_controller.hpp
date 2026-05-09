@@ -168,6 +168,7 @@ protected:
   // ── 장애물 회피 ────────────────────────────────────────────────────────────
   double costmapCost(double wx, double wy) const;
   double footprintCostmapCost(const VehicleState & state) const;
+  bool isFootprintLethal(const VehicleState & state) const;
   bool isTrajectoryCollisionFree(
     const std::vector<double> & u_seq,
     const VehicleState & current_state) const;
@@ -227,6 +228,7 @@ protected:
   double Q_obs_repulsion_;          ///< inflation 영역 반발 가중치
   bool   use_footprint_collision_;  ///< footprint 기반 충돌 검사 사용 여부
   double slowdown_ratio_;           ///< 감속 비율 [%]
+  int    lethal_check_steps_;       ///< MPC 이후 LETHAL 검증 스텝 수
 
   // ── 워밍 스타트 ──────────────────────────────────────────────────────────────
   std::vector<double> u0_;  ///< 이전 최적해 (다음 주기 초기값)
