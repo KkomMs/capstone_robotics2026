@@ -196,6 +196,11 @@ install(PROGRAMS
   RENAME stm32_bridge
   DESTINATION lib/${PROJECT_NAME}
 )
+install(PROGRAMS
+  scripts/asset_reporter.py
+  RENAME asset_reporter
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 # ====================================================
 # install - 리소스

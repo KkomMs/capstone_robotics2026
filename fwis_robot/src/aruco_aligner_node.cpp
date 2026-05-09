@@ -579,7 +579,13 @@ private:
         }
         case Phase::Z: {
             double spd = 0.0;
-            if (!dist_ok) spd += p_.sign_dist * p_.kp_y * e.e_z_avg;
+            if (!dist_ok) {
+                if (e.left_visible && !e.both_visible) {
+                    spd += -p_.sign_dist * p_.kp_y * e.e_z_avg;
+                } else {
+                    spd += p_.sign_dist * p_.kp_y * e.e_z_avg;
+                }
+            }
             if (!diff_ok && e.both_visible) spd += p_.sign_diff * p_.kp_diff * e.e_z_diff;
             if (std::fabs(spd) > 1e-6)
                 spd = ApplyMinAbs(Clamp(spd, -p_.max_vy, p_.max_vy), p_.min_vy);

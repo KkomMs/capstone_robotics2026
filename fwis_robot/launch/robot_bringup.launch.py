@@ -121,6 +121,19 @@ def _launch_setup(context, *args, **kwargs):
         parameters=[dxl_params],
     )
 
+    # ── [추가] asset_reporter ────────────────────────────────────────────────
+    asset_reporter_node = Node(
+        package="fwis_robot",
+        executable="asset_reporter",
+        name="asset_reporter",
+        output="screen",
+        parameters=[{
+            'agent_host': 'http://localhost:5050',  # 같은 PC
+            # 'agent_host': 'http://10.168.237.214:5050',  # 다른 PC일 때 IP 변경
+            'robot_id':   'ROBOT-A01',
+        }],
+    )
+
     # ── Robot state publisher ────────────────────────────────────────────────
     robot_state_publisher = Node(
         package='robot_state_publisher',
@@ -178,6 +191,7 @@ def _launch_setup(context, *args, **kwargs):
         aligner_node,           # [추가]
         scanner_node,           # [추가]
         dxl_node,               # [추가]
+        asset_reporter_node,    # [추가]
         robot_state_publisher,
         ekf_robot_localization_node,
         joy_node,

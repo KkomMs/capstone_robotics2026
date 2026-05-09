@@ -104,11 +104,11 @@ bt_navigator:
 
 bt_navigator_navigate_through_poses_rclcpp_node:
   ros__parameters:
-    use_sim_time: True
+    use_sim_time: False
 
 bt_navigator_navigate_to_pose_rclcpp_node:
   ros__parameters:
-    use_sim_time: True
+    use_sim_time: False
 
 controller_server:
   ros__parameters:
@@ -124,7 +124,7 @@ controller_server:
     # - xy_goal_tolerance: [m] 해당 반경 안에 들어오면 도착으로 간주.
     # - yaw_goal_tolerance: [rad] 해당 각도 차이 이내면 정렬된 것으로 간주.
     progress_checker_plugin: "progress_checker"
-    goal_checker_plugin: ["general_goal_checker", "precise_goal_checker"]
+    goal_checker_plugins: ["general_goal_checker", "precise_goal_checker"]
     controller_plugins: ["FollowPath"]
     # Progress checker parameters
     progress_checker:
@@ -134,12 +134,12 @@ controller_server:
     general_goal_checker:   # 평소 주행용
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.1
+      xy_goal_tolerance: 0.15
       yaw_goal_tolerance: 0.8
     precise_goal_checker:    # 랙 진입용
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.1
+      xy_goal_tolerance: 0.15
       yaw_goal_tolerance: 0.1
     # Controller parameters
     FollowPath:
@@ -191,8 +191,8 @@ local_costmap:
       plugins: ["obstacle_layer", "voxel_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.38
-        cost_scaling_factor: 5.0
+        inflation_radius: 0.48
+        cost_scaling_factor: 4.0
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: true
@@ -285,8 +285,8 @@ global_costmap:
         map_subscribe_transient_local: true
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.38  
-        cost_scaling_factor: 5.0
+        inflation_radius: 0.48  
+        cost_scaling_factor: 4.0
       always_send_full_costmap: true
   global_costmap_client:
     ros__parameters:
@@ -322,7 +322,7 @@ planner_server:
       max_iterations: 1000000               # maximum total iterations to search for before failing (in case unreachable), set to -1 to disable
       max_on_approach_iterations: 1000      # maximum number of iterations to attempt to reach goal once in tolerance
       max_planning_time: 2.0                # max time in s for planner to plan, smooth
-      cost_travel_multiplier: 8.0           # Cost multiplier to apply to search to steer away from high cost areas. Larger values will place in the center of aisles more exactly (if non-`FREE` cost potential field exists) but take slightly longer to compute. To optimize for speed, a value of 1.0 is reasonable. A reasonable tradeoff value is 2.0. A value of 0.0 effective disables steering away from obstacles and acts like a naive binary search A*.
+      cost_travel_multiplier: 8.5           # Cost multiplier to apply to search to steer away from high cost areas. Larger values will place in the center of aisles more exactly (if non-`FREE` cost potential field exists) but take slightly longer to compute. To optimize for speed, a value of 1.0 is reasonable. A reasonable tradeoff value is 2.0. A value of 0.0 effective disables steering away from obstacles and acts like a naive binary search A*.
       use_final_approach_orientation: false # Whether to set the final path pose at the goal's orientation to the requested orientation (false) or in line with the approach angle so the robot doesn't rotate to heading (true)
       smoother:
         max_iterations: 1000
@@ -370,11 +370,11 @@ behavior_server:
     global_frame: odom
     robot_base_frame: base_footprint
     transform_tolerance: 0.1
-    use_sim_time: true
+    use_sim_time: False
     simulate_ahead_time: 2.0
-    max_rotational_vel: 1.0
+    max_rotational_vel: 0.5
     min_rotational_vel: 0.4
-    rotational_acc_lim: 3.2
+    rotational_acc_lim: 2.0
 
 robot_state_publisher:
   ros__parameters:
@@ -393,7 +393,7 @@ waypoint_follower:
 
 waypoint_manager:
   ros__parameters:
-    use_sim_time: True
+    use_sim_time: False
     xy_same_threshold: 0.05   # x,y가 같다고 판단하는 거리 [m]
     yaw_diff_threshold: 5.0   # yaw가 다르다고 판단하는 각도 [deg]
     general_checker_name: "general_goal_checker"
