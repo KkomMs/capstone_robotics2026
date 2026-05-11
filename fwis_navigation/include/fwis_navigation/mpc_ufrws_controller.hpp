@@ -211,6 +211,8 @@ protected:
   bool point_turning_mode_;   ///< 제자리 회전 모드 여부
   bool is_reversing_;         ///< 후진 여부
   bool is_point_turning_;     ///< 제자리 회전 여부
+  double turn_start_threshold_; ///< [제자리 회전 모드] 회전 시작 각도
+  double align_tolerance_;      ///< [제자리 회전 모드] 회전 완료 각도
   double current_v_ref_;      ///< 현재 적용할 동적 속도 [m/s]
   
   // ── 비용 함수 가중치 ─────────────────────────────────────────────────────────

@@ -153,7 +153,9 @@ controller_server:
       max_steer_angle: 180.0       # [deg]
       # ── 주행 모드  ─────────────────────────────
       reversing_mode: false         # 후진 모드
-      point_turning_mode: true    # 제자리 회전 모드
+      point_turning_mode: true      # 제자리 회전 모드
+      turn_start_threshold: 45.0    # [제자리 회전 모드] 회전 시작 각도 [deg]
+      align_tolerance: 5.0          # [제자리 회전 모드] 회전 완료 판정 각도 [deg]
       # ── cost function 가중치 ───────────────────
       ## 상태 오차 가중치
       Q_y: 100.0                  # 횡방향 오차 가중치. 값이 클수록 경로 중앙 유지하려고 함

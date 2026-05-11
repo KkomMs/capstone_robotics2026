@@ -102,7 +102,11 @@ void MpcUFRWSController::configure(
   declare_parameter_if_not_declared(node, plugin_name_ + ".reversing_mode",
     rclcpp::ParameterValue(false));
   declare_parameter_if_not_declared(node, plugin_name_ + ".point_turning_mode",
-    rclcpp::ParameterValue(false));
+    rclcpp::ParameterValue(true));
+  declare_parameter_if_not_declared(node, plugin_name_ + ".turn_start_threshold",
+    rclcpp::ParameterValue(45.0));  // [deg]
+  declare_parameter_if_not_declared(node, plugin_name_ + ".align_tolerance",
+    rclcpp::ParameterValue(5.0));   // [deg]
 
   // ── 비용 함수 가중치 ─────────────────────────────────────────────────────────
   declare_parameter_if_not_declared(node, plugin_name_ + ".Q_y",
@@ -159,6 +163,12 @@ void MpcUFRWSController::configure(
 
   node->get_parameter(plugin_name_ + ".reversing_mode", reversing_mode_);
   node->get_parameter(plugin_name_ + ".point_turning_mode", point_turning_mode_);
+  double turn_start_deg{45.0};
+  double align_complete_deg{5.0};
+  node->get_parameter(plugin_name_ + ".turn_start_threshold", turn_start_deg);
+  node->get_parameter(plugin_name_ + ".align_tolerance", align_complete_deg);
+  turn_start_threshold_ = turn_start_deg * M_PI / 180.0;
+  align_tolerance_ = align_complete_deg * M_PI / 180.0;
 
   if (reversing_mode_ && point_turning_mode_) {
     RCLCPP_WARN(logger_, "Both reversing_mode and point_turning_mode are true. Disabling both for safety. Falling back to default forward mode.");
@@ -866,10 +876,10 @@ bool MpcUFRWSController::orientationModes(
 
   // 1. 제자리 회전 모드
   if (point_turning_mode_) {
-    if (!is_point_turning_ && std::abs(angle_diff) > M_PI_4) {  // 45deg 이상 오차
+    if (!is_point_turning_ && std::abs(angle_diff) > turn_start_threshold_) {  // 45deg 이상 오차
       is_point_turning_ = true;
       RCLCPP_INFO(logger_, "Heading angle error: %.1f deg. Start point turn.", angle_diff * 180.0 / M_PI);
-    } else if (is_point_turning_ && std::abs(angle_diff) < 0.08) {  // 약 5도 이내 오차
+    } else if (is_point_turning_ && std::abs(angle_diff) < align_tolerance_) {  // 약 5도 이내 오차
       is_point_turning_ = false;
       RCLCPP_INFO(logger_, "Align completed.");
     }
