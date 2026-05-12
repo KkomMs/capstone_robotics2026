@@ -184,8 +184,8 @@ def _launch_setup(context, *args, **kwargs):
     )
 
     return [
-        ydlidar_launch,
-        imu_node, 
+        imu_node,
+        ydlidar_launch, 
         stm32_bridge,
         mobile_node,
         aligner_node,           # [추가]

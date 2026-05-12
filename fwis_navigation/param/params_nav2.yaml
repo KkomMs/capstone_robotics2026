@@ -134,19 +134,19 @@ controller_server:
     general_goal_checker:   # 평소 주행용
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.15
+      xy_goal_tolerance: 0.25
       yaw_goal_tolerance: 0.8
     precise_goal_checker:    # 랙 진입용
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.15
-      yaw_goal_tolerance: 0.1
+      xy_goal_tolerance: 0.25
+      yaw_goal_tolerance: 0.09
     # Controller parameters
     FollowPath:
       plugin: "mpc_ufrws_controller::MpcUFRWSController"
       # ── MPC 파라미터 ───────────────────────────
       desired_linear_vel: 0.25
-      desired_angular_vel: 0.50
+      desired_angular_vel: 0.35
       lookahead_dist: 0.3
       control_period: 0.02         # 50 [Hz]
       prediction_horizon: 10       # 예측 구간
@@ -158,21 +158,21 @@ controller_server:
       align_tolerance: 5.0          # [제자리 회전 모드] 회전 완료 판정 각도 [deg]
       # ── cost function 가중치 ───────────────────
       ## 상태 오차 가중치
-      Q_y: 100.0                  # 횡방향 오차 가중치. 값이 클수록 경로 중앙 유지하려고 함
+      Q_y: 150.0                  # 횡방향 오차 가중치. 값이 클수록 경로 중앙 유지하려고 함
       Q_phi: 10.0                 # 선수각 오차 가중치. 값이 클수록 차체 방향 유지하려고 함 (crab walking)
       ## 제어 입력 가중치
       R_u: 0.1                    # 조향각 크기 페널티. 값이 클수록 조향각 변화 작음
-      R_delta: 5.0                # 조향각 변화량 페널티. 값이 클수록 조향 속도 변화 작음
+      R_delta: 2.0                # 조향각 변화량 페널티. 값이 클수록 조향 속도 변화 작음
       # ── NLopt 최적화 가중치 ─────────────────────
       opt_max_eval: 100           # 실시간 보장을 위한 함수 평가 횟수 상한
       opt_ftol_rel: 1.0e-6        # 비용 함수 상대 수렴 허용치
       opt_xtol_rel: 1.0e-6        # 변수 상대 수렴 허용치
       opt_grad_eps: 1.0e-5        # 유한 차분 스텝 크기
       # ── 장애물 회피 파라미터 ────────────────────────────
-      Q_obs_critical: 500.0           # 충돌 임박 영역 가중치
-      Q_obs_repulsion: 5.0            # inflation 영역 반발 가중치
+      Q_obs_critical: 700.0           # 충돌 임박 영역 가중치
+      Q_obs_repulsion: 10.0            # inflation 영역 반발 가중치
       use_footprint_collision: true   # footprint 기반 충돌 검사 사용 유무
-      slowdown_ratio: 0.8             # 감속 비율
+      slowdown_ratio: 0.9             # 감속 비율
       lethal_check_steps: 3           # MPC 출력 후 LETHAL 검증 스텝 수
       # ── TF ───────────────────────────────────
       transform_tolerance: 0.1
@@ -190,12 +190,12 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.05
-      footprint: "[[0.32, 0.32], [0.32, -0.32], [-0.32, -0.32], [-0.32, 0.32]]"
+      footprint: "[[0.37, 0.37], [0.37, -0.37], [-0.37, -0.37], [-0.37, 0.37]]"
       plugins: ["obstacle_layer", "voxel_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.40
-        cost_scaling_factor: 6.0
+        inflation_radius: 0.48
+        cost_scaling_factor: 3.5
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: true
@@ -245,7 +245,7 @@ global_costmap:
       global_frame: map
       robot_base_frame: base_footprint
       use_sim_time: False                   # add
-      footprint: "[[0.32, 0.32], [0.32, -0.32], [-0.32, -0.32], [-0.32, 0.32]]"
+      footprint: "[[0.37, 0.37], [0.37, -0.37], [-0.37, -0.37], [-0.37, 0.37]]"
       resolution: 0.05
       track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "voxel_layer", "inflation_layer"]
@@ -288,8 +288,8 @@ global_costmap:
         map_subscribe_transient_local: true
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.40  
-        cost_scaling_factor: 6.0
+        inflation_radius: 0.48  
+        cost_scaling_factor: 3.5
       always_send_full_costmap: true
   global_costmap_client:
     ros__parameters:
@@ -375,9 +375,9 @@ behavior_server:
     transform_tolerance: 0.1
     use_sim_time: False
     simulate_ahead_time: 2.0
-    max_rotational_vel: 0.5
-    min_rotational_vel: 0.4
-    rotational_acc_lim: 2.0
+    max_rotational_vel: 0.0
+    min_rotational_vel: 0.0
+    rotational_acc_lim: 0.0
 
 robot_state_publisher:
   ros__parameters:
@@ -397,7 +397,7 @@ waypoint_follower:
 waypoint_manager:
   ros__parameters:
     use_sim_time: False
-    xy_same_threshold: 0.05   # x,y가 같다고 판단하는 거리 [m]
+    xy_same_threshold: 0.08   # x,y가 같다고 판단하는 거리 [m]
     yaw_diff_threshold: 5.0   # yaw가 다르다고 판단하는 각도 [deg]
     general_checker_name: "general_goal_checker"
     precise_checker_name: "precise_goal_checker"

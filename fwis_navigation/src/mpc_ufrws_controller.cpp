@@ -225,9 +225,9 @@ void MpcUFRWSController::configure(
     "[MpcUFRWSController] Configured. "
     "L=%.3f m, W=%.3f m, V_ref=%.2f m/s, N=%d, dt=%.2f s, "
     "max_steer=%.1f deg, optimizer=NLopt::LD_SLSQP, max_eval=%d, "
-    "Q_obs_critical=%.1f, Q_obs_repulsion=%.1f",
+    "Q_obs_critical=%.1f, Q_obs_repulsion=%.1f, slowdown_radio=%.1f",
     L_, W_, V_ref_, N_, dt_, max_steer_deg, opt_max_eval_,
-    Q_obs_critical_, Q_obs_repulsion_);
+    Q_obs_critical_, Q_obs_repulsion_, slowdown_ratio_);
 
   // ── 타이머 ───────────────────────────────────────────────────────────
   last_cmd_time_ = clock_->now();
@@ -379,12 +379,12 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   try {
     transformed_plan = transformGlobalPlan(pose);
   } catch (const std::exception & e) {
-    RCLCPP_WARN(logger_, "transformGlobalPlan failed: %s. Stopping.", e.what());
+    RCLCPP_INFO(logger_, "transformGlobalPlan failed: %s. Stopping.", e.what());
     return geometry_msgs::msg::TwistStamped();
   }
 
   if (transformed_plan.poses.empty()) {
-    RCLCPP_WARN(logger_, "Transformed plan is empty. Stopping.");
+    RCLCPP_INFO(logger_, "Transformed plan is empty. Stopping.");
     return geometry_msgs::msg::TwistStamped();
   }
   
@@ -396,7 +396,7 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
     {
       if (goal_checker->isGoalReached(pose.pose, goal_pose_odom.pose, velocity))
       {
-        RCLCPP_INFO_THROTTLE(logger_, *clock_, 2000,
+        RCLCPP_INFO(logger_,
           "Goal reached. Sending zero velocity.");
         geometry_msgs::msg::TwistStamped stop_cmd;
         stop_cmd.header.frame_id = pose.header.frame_id;
@@ -417,7 +417,7 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   try {
     target_seq = generateReferenceTrajectory(current_state, transformed_plan.poses);
   } catch (const std::exception & e) {
-    RCLCPP_WARN(logger_, "Reference trajectory failed: %s", e.what());
+    RCLCPP_INFO(logger_, "Reference trajectory failed: %s", e.what());
     geometry_msgs::msg::TwistStamped stop_cmd;
     stop_cmd.header = pose.header;
     stop_cmd.header.stamp    = clock_->now();
@@ -428,7 +428,7 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   const bool lethal_now = isFootprintLethal(current_state);
   // LETHAL 긴급 정지
   if (lethal_now) {
-    RCLCPP_WARN(logger_,
+    RCLCPP_INFO(logger_,
       "LETHAL obstacle at current footprint! Emergency stop + replan.");
     throw nav2_core::PlannerException(
       "Emergency stop: LETHAL obstacle at current robot footprint");
@@ -438,7 +438,7 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   if (cost_now >= 0.90) {
     // INSCRIBED 근처 감속
     current_v_ref_ = V_ref_ * slowdown_ratio_;
-    RCLCPP_DEBUG(logger_,
+    RCLCPP_INFO(logger_,
       "Near INSCRIBED (cost=%.2f). Slowing to %.2f m/s", cost_now, current_v_ref_);
   }
 
@@ -466,7 +466,7 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
     check_state = ufrwsModel(check_state, df, dr);
 
     if (isFootprintLethal(check_state)) {
-      RCLCPP_WARN(logger_,
+      RCLCPP_INFO(logger_,
         "Predicted LETHAL collision at step %d. Emergency stop + replan.", i + 1);
       throw nav2_core::PlannerException(
         "Emergency stop: Predicted LETHAL collision in trajectory");

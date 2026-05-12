@@ -79,6 +79,27 @@ def normalize_angle(angle: float) -> float:
     return angle
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  waypoint 정의
+# ─────────────────────────────────────────────────────────────────────────────
+def build_waypoints(navigator: BasicNavigator) -> list:
+    half_turn = 1.5708
+    a_round   = 3.14
+
+    coords = [
+        # (x,     y,     yaw)
+        ( 2.8,  0.0,  0.0),
+        ( 3.76, -4.99, -half_turn),
+        (-0.3,  -2.65,  half_turn),
+        (-0.3,  -2.65,  0.0),
+        ( 3.54, -2.7,  0.0),
+        ( 0.23, -0.05, 0.0),
+        #### 자세정렬 테스트용
+        # (3.4, -2.5, 0.0),
+    ]
+
+    return [make_pose(navigator, x, y, yaw) for x, y, yaw in coords]
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  Determine GoalChecker
 # ─────────────────────────────────────────────────────────────────────────────
 XY_SAME_THRESHOLD = 0.05
@@ -294,29 +315,6 @@ class MissionBridge(Node):
         if self._publish_thread is not None:
             self._publish_thread.join(timeout=1.0)
             self._publish_thread = None
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  waypoint 정의
-# ─────────────────────────────────────────────────────────────────────────────
-def build_waypoints(navigator: BasicNavigator) -> list:
-    half_turn = 1.5708
-    a_round   = 3.14
-
-    coords = [
-        # (x,     y,     yaw)
-        ( 2.8,  0.0,  0.0),
-        ( 3.76, -4.99, -half_turn),
-        (-0.2,  -2.7,  half_turn),
-        (-0.2,  -2.7,  0.0),
-        ( 3.37, -2.7,  0.0),
-        ( 0.1,  0.0, 0.0),
-        #### 자세정렬 테스트용
-        # (3.4, -2.5, 0.0),
-    ]
-
-    return [make_pose(navigator, x, y, yaw) for x, y, yaw in coords]
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  main

@@ -30,8 +30,8 @@ defaults:
         add_cmd_speed: 0.02
         bound_cmd_ang_speed: 0.15
         add_cmd_ang_speed: 0.05
-        max_linear_accel: 0.6
-        max_angular_accel: 1.5
+        max_linear_accel: 0.25
+        max_angular_accel: 0.5
         deadzone_linear: 0.03
         deadzone_angular: 0.03
         lpf_linear: 0.0
@@ -185,7 +185,7 @@ defaults:
       dxl_left_p3_step:   3
       dxl_right_p0_step: 40
       dxl_right_p2_step: 10
-      dxl_right_p3_step:  5
+      dxl_right_p3_step:  3
 
       dxl_left_p2_is_sweep:  false
       dxl_right_p2_is_sweep: false
@@ -196,7 +196,7 @@ defaults:
       alignment_done_delay_sec: 2.0
 
       total_slots: 51
-      empty_slots: [9, 11, 14, 30, 39, 50]
+      empty_slots: [0]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # mobile_robot_node

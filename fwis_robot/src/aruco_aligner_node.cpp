@@ -522,15 +522,15 @@ private:
             RCLCPP_INFO(this->get_logger(), "[ArucoAligner] X → Z");
         }
 
-        if      (phase_ == Phase::Z && yaw_bad)    { phase_ = Phase::YAW; yaw_locked_ = false; RCLCPP_WARN(this->get_logger(), "[ArucoAligner] yaw 틀어짐 → YAW"); }
-        else if (phase_ == Phase::Z && !center_ok) { phase_ = Phase::X;   RCLCPP_WARN(this->get_logger(), "[ArucoAligner] x 틀어짐 → X"); }
-        else if (phase_ == Phase::X && yaw_bad &&
-                 x_phase_enter_t_.nanoseconds() > 0 &&
-                 (this->get_clock()->now() - x_phase_enter_t_).seconds() > p_.x_phase_min_hold_time)
-        {
-            phase_ = Phase::YAW; yaw_locked_ = false;
-            RCLCPP_WARN(this->get_logger(), "[ArucoAligner] X중 yaw 틀어짐 → YAW");
-        }
+        // if      (phase_ == Phase::Z && yaw_bad)    { phase_ = Phase::YAW; yaw_locked_ = false; RCLCPP_WARN(this->get_logger(), "[ArucoAligner] yaw 틀어짐 → YAW"); }
+        // else if (phase_ == Phase::Z && !center_ok) { phase_ = Phase::X;   RCLCPP_WARN(this->get_logger(), "[ArucoAligner] x 틀어짐 → X"); }
+        // else if (phase_ == Phase::X && yaw_bad &&
+        //          x_phase_enter_t_.nanoseconds() > 0 &&
+        //          (this->get_clock()->now() - x_phase_enter_t_).seconds() > p_.x_phase_min_hold_time)
+        // {
+        //     phase_ = Phase::YAW; yaw_locked_ = false;
+        //     RCLCPP_WARN(this->get_logger(), "[ArucoAligner] X중 yaw 틀어짐 → YAW");
+        // }
 
         if (phase_ == Phase::Z && dist_ok && !e.both_visible) {
             RCLCPP_INFO(this->get_logger(),
@@ -540,8 +540,8 @@ private:
             return;
         }
 
-        const bool all_ok = yaw_ok && center_ok && dist_ok && diff_ok && e.both_visible;
-        stable_count_ = all_ok ? stable_count_ + 1 : 0;
+        // const bool all_ok = yaw_ok && center_ok && dist_ok && diff_ok && e.both_visible;
+        // stable_count_ = all_ok ? stable_count_ + 1 : 0;
 
         const char * ps = (phase_==Phase::YAW)       ? "YAW"
                         : (phase_==Phase::YAW_SETTLE) ? "YSET"
@@ -550,15 +550,19 @@ private:
                         : "SRCH";
         RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 250,
             "[ALIGN|%s|%s] eYL=%+.4f eYR=%+.4f(%s) eX=%+.4f(%s) "
-            "eZavg=%+.4f(%s) eZdiff=%+.4f(%s) cnt=%d/%d",
+            "eZavg=%+.4f(%s) eZdiff=%+.4f(%s)",
             ps, e.both_visible ? "BOTH" : "ONE",
             e.e_yaw_l, e.e_yaw_r, yaw_ok?"OK":"--",
             e.e_x,     center_ok?"OK":"--",
             e.e_z_avg, dist_ok?"OK":"--",
-            e.e_z_diff, diff_ok?"OK":"--",
-            stable_count_, p_.required_stable);
+            e.e_z_diff, diff_ok?"OK":"--");
 
-        if (stable_count_ >= p_.required_stable) { OnAlignDone(e); return; }
+        // if (stable_count_ >= p_.required_stable) { OnAlignDone(e); return; }
+
+        if (phase_ == Phase::Z && dist_ok && diff_ok && e.both_visible) {
+            OnAlignDone(e);
+            return;
+        }
 
         switch (phase_) {
         case Phase::YAW: {
