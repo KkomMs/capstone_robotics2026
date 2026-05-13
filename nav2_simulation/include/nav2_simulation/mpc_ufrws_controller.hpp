@@ -5,6 +5,7 @@
 #include <vector>
 #include <memory>
 #include <limits>
+#include <atomic>
 
 #include <nlopt.hpp>
 
@@ -16,6 +17,7 @@
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
 #include "nav2_costmap_2d/costmap_2d_ros.hpp"
+#include "std_msgs/msg/bool.hpp"
 
 namespace mpc_ufrws_controller
 {
@@ -185,6 +187,7 @@ protected:
   rclcpp::Logger logger_{rclcpp::get_logger("MpcUFRWSController")};
   rclcpp::Clock::SharedPtr clock_;
   std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Path>>  global_pub_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr  heading_only_sub_;
 
   // ── 차량 파라미터 ────────────────────────────────────────────────────────────
   double Lf_;           ///< 차량 중심~전축 거리 [m]
@@ -200,13 +203,17 @@ protected:
   double dt_;                   ///< 제어 주기 [s]
   int    N_;                    ///< 예측 구간 스텝 수
   double max_steer_;            ///< 최대 조향각 [rad]
+  double goal_decel_radius_;      ///< 감속 시작 거리 [m]
+  double goal_min_approach_vel_;  ///< 최소 접근 속도 [m/s]
 
   // ── 주행 모드 파라미터 ───────────────────────────────────────────────────────
-  bool reversing_mode_;       ///< 후진 모드 여부
-  bool point_turning_mode_;   ///< 제자리 회전 모드 여부
-  bool is_reversing_;         ///< 후진 여부
-  bool is_point_turning_;     ///< 제자리 회전 여부
-  double current_v_ref_;      ///< 현재 적용할 동적 속도 [m/s]
+  bool reversing_mode_;           ///< 후진 모드 여부
+  bool point_turning_mode_;       ///< 제자리 회전 모드 여부
+  bool is_reversing_;             ///< 후진 여부
+  bool is_point_turning_;         ///< 제자리 회전 여부
+  double current_v_ref_;          ///< 현재 적용할 동적 속도 [m/s]
+  double turn_start_threshold_;   ///< [제자리 회전 모드] 회전 시작 각도
+  double align_tolerance_;        ///< [제자리 회전 모드] 회전 완료 판정 각도
 
   // ── 비용 함수 가중치 ─────────────────────────────────────────────────────────
   double Q_y_;     ///< 횡방향 오차 가중치
@@ -244,6 +251,9 @@ protected:
   bool orientationModes(
     const geometry_msgs::msg::PoseStamped & pose,
     geometry_msgs::msg::TwistStamped & cmd_vel);
+  
+  // heading-only mode
+  std::atomic<bool> heading_only_mode_{false};
 };
 
 }  // namespace mpc_ufrws_controller

@@ -5,10 +5,8 @@ import time
 import threading
 from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
 from geometry_msgs.msg import PoseStamped, Quaternion
-from std_msgs.msg import String
-from nav2_msgs.action import NavigateToPose
+from std_msgs.msg import String, Bool
 from rclpy.node import Node
-from rclpy.action import ActionClient
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from rclpy.parameter import Parameter
 from rcl_interfaces.srv import GetParameters
@@ -51,7 +49,7 @@ def waypoints(navigator: BasicNavigator) -> list:
     poses = [
         # (x, y, yaw)
         ( 1.98,  2.99,  0.0 ),
-        ( 3.5,  -2.03,  -half_turn ),
+        ( 3.5,  -2.20,  -half_turn ),
         ( -3.48,  0.07,  half_turn ),
         ( -3.48,  0.07,  0.0),
         ( 3.03,  0.07, 0.0),
@@ -89,7 +87,9 @@ class WaypointManager(Node):
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
             depth=1
         )
+        qos = QoSProfile(depth=10, durability=DurabilityPolicy.VOLATILE)
         self.gc_selector_pub = self.create_publisher(String, self.gc_topic, gc_qos)
+        self.heading_only_pub = self.create_publisher(Bool, '/heading_only_mode', qos)
  
         # ── 반복 publish 제어 ────────────────────────────────────────
         self._current_checker = self.general_checker
@@ -130,6 +130,14 @@ class WaypointManager(Node):
                 f'(xy={xy_dist:.4f}m, Δyaw={math.degrees(yaw_diff):.1f}°) '
                 f'→ {self.general_checker}')
             return self.general_checker
+        
+    # ── heading-only 모드 발행 ──────────────
+    def publish_heading_only(self, value: Bool):
+        msg = Bool()
+        msg.data = value
+        self.heading_only_pub.publish(msg)
+        self.get_logger().info(
+            f'[MissionBridge] /heading_only_mode = {value}')
  
     # ── GoalChecker 반복 publish (BT 생성 후 수신 보장) ──────────────
     def _publish_loop(self):
@@ -256,8 +264,12 @@ def main():
             manager.get_logger().info(f'  첫 번째 waypoint → {checker}')
         else:
             checker = manager.determine_goal_checker(all_waypoints[i - 1], wp)
+
+        # 2. heading-only 모드 판정 & 발행
+        is_heading_only = (checker == manager.precise_checker)
+        manager.publish_heading_only(is_heading_only)
  
-        # 2. timestamp 갱신
+        # 3. timestamp 갱신
         wp.header.stamp = navigator.get_clock().now().to_msg()
  
         yaw_deg = math.degrees(quaternion2yaw(wp.pose.orientation))
@@ -265,24 +277,25 @@ def main():
               f'({wp.pose.position.x:.2f}, {wp.pose.position.y:.2f}, '
               f'yaw={yaw_deg:.1f}°) [{checker}]')
  
-        # 3. goToPose 호출 → BT 생성됨
+        # 4. goToPose 호출 → BT 생성됨
         navigator.goToPose(wp)
  
-        # 4. goToPose 직후, BT의 GoalCheckerSelector가 subscription 생성될 때까지
+        # 5. goToPose 직후, BT의 GoalCheckerSelector가 subscription 생성될 때까지
         #    반복적으로 publish (BT가 수신할 수 있도록)
         manager.start_publishing(checker)
  
-        # 5. 주행 모니터링
+        # 6. 주행 모니터링
         while not navigator.isTaskComplete():
             feedback = navigator.getFeedback()
             if feedback:
                 remaining = feedback.distance_remaining
             time.sleep(0.5)
  
-        # 6. 반복 publish 중지
+        # 7. 반복 publish 중지
         manager.stop_publishing()
+        manager.publish_heading_only(False)
  
-        # 7. 결과 확인
+        # 8. 결과 확인
         result = navigator.getResult()
         if result == TaskResult.SUCCEEDED:
             print(f'  [WP {i + 1}/{total}] 도달 성공.')
