@@ -97,6 +97,10 @@ void MpcUFRWSController::configure(
     rclcpp::ParameterValue(10));
   declare_parameter_if_not_declared(node, plugin_name_ + ".max_steer_angle",
     rclcpp::ParameterValue(89.9));  // [deg]
+  declare_parameter_if_not_declared(node, plugin_name_ + ".goal_decel_radius",
+    rclcpp::ParameterValue(0.8));
+  declare_parameter_if_not_declared(node, plugin_name_ + ".goal_min_approach_vel",
+    rclcpp::ParameterValue(0.18));
 
   // ── 주행 모드 파라미터 ────────────────────────────────────────────────────────
   declare_parameter_if_not_declared(node, plugin_name_ + ".reversing_mode",
@@ -106,8 +110,9 @@ void MpcUFRWSController::configure(
   declare_parameter_if_not_declared(node, plugin_name_ + ".turn_start_threshold",
     rclcpp::ParameterValue(45.0));  // [deg]
   declare_parameter_if_not_declared(node, plugin_name_ + ".align_tolerance",
-    rclcpp::ParameterValue(5.0));   // [deg]
-
+    rclcpp::ParameterValue(4.0));   // [deg]
+  declare_parameter_if_not_declared(node, plugin_name_ + ".turn_decel_threshold",
+    rclcpp::ParameterValue(15.0));   // [deg]
   // ── 비용 함수 가중치 ─────────────────────────────────────────────────────────
   declare_parameter_if_not_declared(node, plugin_name_ + ".Q_y",
     rclcpp::ParameterValue(200.0));
@@ -161,14 +166,20 @@ void MpcUFRWSController::configure(
   node->get_parameter(plugin_name_ + ".max_steer_angle", max_steer_deg);
   max_steer_ = max_steer_deg * M_PI / 180.0;
 
+  node->get_parameter(plugin_name_ + ".goal_decel_radius",     goal_decel_radius_);
+  node->get_parameter(plugin_name_ + ".goal_min_approach_vel", goal_min_approach_vel_);
+
   node->get_parameter(plugin_name_ + ".reversing_mode", reversing_mode_);
   node->get_parameter(plugin_name_ + ".point_turning_mode", point_turning_mode_);
   double turn_start_deg{45.0};
-  double align_complete_deg{5.0};
+  double align_complete_deg{4.0};
+  double turn_decel_deg{15.0};
   node->get_parameter(plugin_name_ + ".turn_start_threshold", turn_start_deg);
-  node->get_parameter(plugin_name_ + ".align_tolerance", align_complete_deg);
+  node->get_parameter(plugin_name_ + ".align_tolerance",      align_complete_deg);
+  node->get_parameter(plugin_name_ + ".turn_decel_threshold", turn_decel_deg);
   turn_start_threshold_ = turn_start_deg * M_PI / 180.0;
   align_tolerance_ = align_complete_deg * M_PI / 180.0;
+  turn_decel_threshold_ = turn_decel_deg * M_PI / 180.0;
 
   if (reversing_mode_ && point_turning_mode_) {
     RCLCPP_WARN(logger_, "Both reversing_mode and point_turning_mode are true. Disabling both for safety. Falling back to default forward mode.");
@@ -221,13 +232,25 @@ void MpcUFRWSController::configure(
   // ── 퍼블리셔 ────────────────────────────────────────────────────────────
   global_pub_ = node->create_publisher<nav_msgs::msg::Path>("received_global_plan", 1);
 
+  // ── subscriber ────────────────────────────────────────────────────────────
+  heading_only_sub_ = node->create_subscription<std_msgs::msg::Bool>(
+    "/heading_only_mode", rclcpp::QoS(10),
+    [this](const std_msgs::msg::Bool::SharedPtr msg) {
+      heading_only_mode_.store(msg->data);
+      RCLCPP_INFO_THROTTLE(logger_, *clock_, 2000,
+        "[MpcUFRWSController] Heading-only mode: %s",
+        msg->data ? "ON" : "OFF");
+    });
+
   RCLCPP_INFO(logger_,
     "[MpcUFRWSController] Configured. "
     "L=%.3f m, W=%.3f m, V_ref=%.2f m/s, N=%d, dt=%.2f s, "
     "max_steer=%.1f deg, optimizer=NLopt::LD_SLSQP, max_eval=%d, "
-    "Q_obs_critical=%.1f, Q_obs_repulsion=%.1f, slowdown_radio=%.1f",
+    "Q_obs_critical=%.1f, Q_obs_repulsion=%.1f, slowdown_radio=%.1f, "
+    "goal_decel_radius=%.2f m, goal_min_approach_vel=%.3f m/s",
     L_, W_, V_ref_, N_, dt_, max_steer_deg, opt_max_eval_,
-    Q_obs_critical_, Q_obs_repulsion_, slowdown_ratio_);
+    Q_obs_critical_, Q_obs_repulsion_, slowdown_ratio_,
+    goal_decel_radius_, goal_min_approach_vel_);
 
   // ── 타이머 ───────────────────────────────────────────────────────────
   last_cmd_time_ = clock_->now();
@@ -238,6 +261,7 @@ void MpcUFRWSController::cleanup()
   RCLCPP_INFO(logger_, "Cleaning up MpcUFRWSController: %s", plugin_name_.c_str());
   nlopt_opt_.reset();
   global_pub_.reset();
+  heading_only_sub_.reset();
 }
 
 void MpcUFRWSController::activate()
@@ -406,13 +430,72 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
     }
   }
 
-  // ── 4. 후진 모드 또는 제자리 회전 모드 ──────────────────────────────────────
+  // ── 4. heading-only 모드 ───────────────────────────────────────────────
+  if (heading_only_mode_.load()) {
+    geometry_msgs::msg::PoseStamped goal_pose_odom;
+    if (transformPose(tf_, costmap_ros_->getGlobalFrameID(),
+          global_plan_.poses.back(), goal_pose_odom, transform_tolerance_))
+    {
+      // goal의 실제 yaw 추출
+      const auto & gq = goal_pose_odom.pose.orientation;
+      double goal_yaw = std::atan2(
+        2.0 * (gq.w * gq.z + gq.x * gq.y),
+        1.0 - 2.0 * (gq.y * gq.y + gq.z * gq.z));
+
+      double yaw_err = normalizeAngle(goal_yaw - current_state.theta);
+
+      RCLCPP_INFO(logger_,
+        "[HeadingOnly] goal_yaw=%.1f° current=%.1f° err=%.1f°",
+        goal_yaw * 180.0 / M_PI,
+        current_state.theta * 180.0 / M_PI,
+        yaw_err * 180.0 / M_PI);
+
+      geometry_msgs::msg::TwistStamped cmd;
+      cmd.header.frame_id = pose.header.frame_id;
+      cmd.header.stamp    = clock_->now();
+      cmd.twist.linear.x  = 0.0;
+      cmd.twist.linear.y  = 0.0;
+      
+      if (std::abs(yaw_err) > align_tolerance_) {
+        // 오차 크기에 따라 비례 감속
+        double scale = std::min(1.0, std::abs(yaw_err) / turn_decel_threshold_);
+        double omega = desired_angular_vel_ * scale;
+        omega = std::max(omega, 0.20);    // 최소 각속도
+        cmd.twist.angular.z = (yaw_err > 0) ? omega : -omega;
+      } else {
+        cmd.twist.angular.z = 0.0;        // 정렬 완료
+      }
+      return cmd;
+    }
+  }
+
+  // ── 5. goal 근접 감속 ───────────────────────────────────────────────
+  geometry_msgs::msg::PoseStamped goal_pose_odom;
+  if (transformPose(tf_, costmap_ros_->getGlobalFrameID(),
+        global_plan_.poses.back(), goal_pose_odom, transform_tolerance_))
+  {
+    double dx = goal_pose_odom.pose.position.x - pose.pose.position.x;
+    double dy = goal_pose_odom.pose.position.y - pose.pose.position.y;
+    double dist_to_goal = std::hypot(dx, dy);
+
+    if (dist_to_goal < goal_decel_radius_) {
+      // 선형 비례 감속
+      double scale = dist_to_goal / goal_decel_radius_;
+      current_v_ref_ = goal_min_approach_vel_ + (V_ref_ - goal_min_approach_vel_) * scale;
+
+      RCLCPP_INFO(logger_,
+        "[GoalApproach] dist=%.3fm → v_ref=%.3f m/s (decel_radius=%.2fm)",
+        dist_to_goal, current_v_ref_, goal_decel_radius_);
+    }
+  }
+
+  // ── 6. 후진 모드 또는 제자리 회전 모드 ──────────────────────────────────────
   geometry_msgs::msg::TwistStamped cmd_vel;
   if (orientationModes(pose, cmd_vel)) {
     return cmd_vel;
   }
 
-  // ── 5. N 스텝 참조 궤적 생성 ──────────────────────────────────────────────
+  // ── 7. N 스텝 참조 궤적 생성 ──────────────────────────────────────────────
   std::vector<VehicleState> target_seq;
   try {
     target_seq = generateReferenceTrajectory(current_state, transformed_plan.poses);
@@ -424,7 +507,7 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
     return stop_cmd;
   }
 
-  // ── 6. 장애물 회피를 위한 속도 조절 ────────────────────────────────────────────
+  // ── 8. 장애물 회피를 위한 속도 조절 ────────────────────────────────────────────
   const bool lethal_now = isFootprintLethal(current_state);
   // LETHAL 긴급 정지
   if (lethal_now) {
@@ -442,21 +525,21 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
       "Near INSCRIBED (cost=%.2f). Slowing to %.2f m/s", cost_now, current_v_ref_);
   }
 
-  // ── 7. NLopt 최적화 ────────────────────────────────────────────────────────
+  // ── 9. NLopt 최적화 ────────────────────────────────────────────────────────
   const std::vector<double> optimal_u = optimizeMPC(current_state, target_seq);
 
   // 첫 번째 스텝의 제어 입력만 실제로 인가
   const double delta_f = optimal_u[0];
   const double delta_r = optimal_u[1];
 
-  // ── 8. 워밍 스타트 갱신 ───────────────────────────────────────────────────
+  // ── 10. 워밍 스타트 갱신 ───────────────────────────────────────────────────
   for (size_t i = 0; i < u0_.size() - 2; ++i) {
     u0_[i] = optimal_u[i + 2];
   }
   u0_[u0_.size() - 2] = 0.0;
   u0_[u0_.size() - 1] = 0.0;
 
-  // ── 9. 궤적 LETHAL 충돌 검증 ──────────────────────────────────────────────
+  // ── 11. 궤적 LETHAL 충돌 검증 ──────────────────────────────────────────────
   VehicleState check_state = current_state;
   const int check_steps = std::min(lethal_check_steps_, static_cast<int>(optimal_u.size() / 2));
 
@@ -473,7 +556,7 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
     }
   }
 
-  // ── 10. 최종 cmd_vel 계산 ─────────────────────────────────────────────────
+  // ── 12. 최종 cmd_vel 계산 ─────────────────────────────────────────────────
   const WheelAngles steer = computeWheelAngles(delta_f, delta_r);
   const WheelVelocities vel = computeWheelVelocities(delta_f, delta_r);
 
@@ -848,7 +931,9 @@ bool MpcUFRWSController::orientationModes(
   const geometry_msgs::msg::PoseStamped & pose,
   geometry_msgs::msg::TwistStamped & cmd_vel)
 {
-  current_v_ref_ = V_ref_;
+  if (current_v_ref_ >= V_ref_) {
+    current_v_ref_ = V_ref_;
+  }
   is_reversing_ = false;
 
   if (global_plan_.poses.size() < 2) return false;

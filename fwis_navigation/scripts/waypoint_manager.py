@@ -150,7 +150,7 @@ class MissionBridge(Node):
         # ── Publishers ─────────────────────────────────────────────────────
         self.pause_pub = self.create_publisher(Bool, '/mobile_robot_pause', qos)
 
-        # [추가] initialpose publisher
+        # initialpose publisher
         self.initialpose_pub = self.create_publisher(
             PoseWithCovarianceStamped, '/initialpose', 10)
 
@@ -159,8 +159,12 @@ class MissionBridge(Node):
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
             depth=1
         )
+        # goal checker selector
         self.gc_selector_pub = self.create_publisher(
             String, '/goal_checker_selector', gc_qos)
+        # heading-only mode
+        self.heading_only_pub = self.create_publisher(
+            Bool, '/heading_only_mode', qos)
 
         # ── Subscribers ────────────────────────────────────────────────────
         self.create_subscription(
@@ -195,6 +199,9 @@ class MissionBridge(Node):
         self._current_checker = GENERAL_CHECKER_NAME
         self._publish_active = False
         self._publish_thread = None
+
+        # heading-only mode
+        self._heading_only_mode = False
 
     # ── 콜백 ───────────────────────────────────────────────────────────────
 
@@ -273,6 +280,13 @@ class MissionBridge(Node):
         self.gc_selector_pub.publish(msg)
         self.get_logger().info(
             f'[MissionBridge] /goal_checker_selector = {checker_name}')
+        
+    def publish_heading_only(self, value: bool):
+        msg = Bool()
+        msg.data = value
+        self.heading_only_pub.publish(msg)
+        self.get_logger().info(
+            f'[MissionBridge] /heading_only_mode = {value}')
 
     def reset_flags(self):
         self.aruco_detected.clear()
@@ -296,12 +310,18 @@ class MissionBridge(Node):
             msg = String()
             msg.data = self._current_checker
             self.gc_selector_pub.publish(msg)
+
+            heading_msg = Bool()
+            heading_msg.data = self._heading_only_mode
+            self.heading_only_pub.publish(heading_msg)
+
             time.sleep(0.2)
 
-    def start_publishing(self, checker_name: str):
+    def start_publishing(self, checker_name: str, heading_only: bool = False):
         """반복 publish 시작"""
         self.stop_publishing()
         self._current_checker = checker_name
+        self._heading_only_mode = heading_only
         self._publish_active = True
         self._publish_thread = threading.Thread(
             target=self._publish_loop, daemon=True)
@@ -352,7 +372,10 @@ def main():
         else:
             checker = determine_goal_checker(all_waypoints[i - 1], wp)
 
-        # 2) timestamp 갱신
+        # 2) heading-only 모드 판정
+        is_heading_only = (checker == PRECISE_CHECKER_NAME)
+
+        # 3) timestamp 갱신
         wp.header.stamp = navigator.get_clock().now().to_msg()
 
         yaw_deg = math.degrees(quaternion2yaw(wp.pose.orientation))
@@ -360,15 +383,15 @@ def main():
               f'({wp.pose.position.x:.2f}, {wp.pose.position.y:.2f}, '
               f'yaw={yaw_deg:.1f}°) [{checker}]')
 
-        # 3) 플래그 초기화 & goToPose 호출
+        # 4) 플래그 초기화 & goToPose 호출
         bridge.reset_flags()
         navigator.goToPose(wp)
 
-        # 4) goToPose 직후 GoalChecker 반복 publish 시작
+        # 5) goToPose 직후 GoalChecker 반복 publish 시작
         #    BT의 GoalCheckerSelector가 subscription을 생성한 뒤 수신 보장
-        bridge.start_publishing(checker)
+        bridge.start_publishing(checker, is_heading_only)
 
-        # 5) 주행 모니터링
+        # 6) 주행 모니터링
         wp_interrupted = False
         while not navigator.isTaskComplete():
             feedback = navigator.getFeedback()
@@ -404,15 +427,15 @@ def main():
 
             time.sleep(0.3)
 
-        # 6) 반복 publish 중지
+        # 7) 반복 publish 중지
         bridge.stop_publishing()
 
-        # 7) aruco 인터럽트 → 현재 waypoint 재시도
+        # 8) aruco 인터럽트 → 현재 waypoint 재시도
         if wp_interrupted:
             bridge.reset_flags()
             continue
 
-        # 8) task 완료 직후에도 aruco 체크
+        # 9) task 완료 직후에도 aruco 체크
         if bridge.aruco_detected.is_set():
             print('[Mission] ★ (task 완료 후) 마커 감지! → 정렬/스캔 시작')
 
@@ -432,7 +455,7 @@ def main():
             i += 1
             continue
 
-        # 9) 결과 확인
+        # 10) 결과 확인
         result = navigator.getResult()
         if result == TaskResult.SUCCEEDED:
             print(f'  [WP {i + 1}/{total}] 도달 성공 ✓')

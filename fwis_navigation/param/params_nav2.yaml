@@ -131,31 +131,36 @@ controller_server:
       plugin: "nav2_controller::SimpleProgressChecker"
       required_movement_radius: 0.5
       movement_time_allowance: 5.0
-    general_goal_checker:   # 평소 주행용
+    # 평소 주행용
+    general_goal_checker:
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.25
+      xy_goal_tolerance: 0.15
       yaw_goal_tolerance: 0.8
-    precise_goal_checker:    # 랙 진입용
+    # 랙 진입용
+    precise_goal_checker:
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
       xy_goal_tolerance: 0.25
-      yaw_goal_tolerance: 0.09
+      yaw_goal_tolerance: 0.1
     # Controller parameters
     FollowPath:
       plugin: "mpc_ufrws_controller::MpcUFRWSController"
       # ── MPC 파라미터 ───────────────────────────
       desired_linear_vel: 0.25
-      desired_angular_vel: 0.35
+      desired_angular_vel: 0.40
       lookahead_dist: 0.3
       control_period: 0.02         # 50 [Hz]
       prediction_horizon: 10       # 예측 구간
       max_steer_angle: 180.0       # [deg]
+      goal_decel_radius: 0.8       # goal 감속 시작 거리 [m]
+      goal_min_approach_vel: 0.18  # goal 최소 접근 속도 [m/s]
       # ── 주행 모드  ─────────────────────────────
       reversing_mode: false         # 후진 모드
       point_turning_mode: true      # 제자리 회전 모드
       turn_start_threshold: 45.0    # [제자리 회전 모드] 회전 시작 각도 [deg]
-      align_tolerance: 5.0          # [제자리 회전 모드] 회전 완료 판정 각도 [deg]
+      align_tolerance: 4.0          # [제자리 회전 모드] 회전 완료 판정 각도 [deg]
+      turn_decel_threshold: 15.0    # [제자리 회전 모드] 회전 감속 시작 각도 [deg]
       # ── cost function 가중치 ───────────────────
       ## 상태 오차 가중치
       Q_y: 150.0                  # 횡방향 오차 가중치. 값이 클수록 경로 중앙 유지하려고 함
