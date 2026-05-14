@@ -196,5 +196,5 @@ def _launch_setup(context, *args, **kwargs):
         ekf_robot_localization_node,
         joy_node,
         teleop_twist_joy_node,
-        rviz,
+        #rviz,
     ]

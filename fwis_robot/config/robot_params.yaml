@@ -78,33 +78,33 @@ defaults:
       alignment_mode: "C"
 
       # ── C 모드 기준값 ────────────────────────────────────────
-      ref_x:           -0.024
-      ref_yaw_left:     0.007
-      ref_yaw_right:   -0.005
-      target_avg_dist:  0.597
-      target_z_diff:    0.014
+      ref_x:             0.001
+      ref_yaw_left:     -0.002
+      ref_yaw_right:     0.001
+      target_avg_dist:   0.604
+      target_z_diff:     0.013
       marker_id_left:  2
       marker_id_right: 1
 
       # ── PID 게인 ────────────────────────────────────────────
       kp_w:    3.0
-      kp_x:    0.3
-      kp_y:    0.3
-      kp_diff: 0.3
+      kp_x:    0.2
+      kp_y:    0.2
+      kp_diff: 0.2
 
       # ── 속도 한계 ────────────────────────────────────────────
-      max_w:  0.18
-      min_w:  0.13
-      max_vx: 0.18
-      min_vx: 0.13
-      max_vy: 0.18
+      max_w:  0.20
+      min_w:  0.15
+      max_vx: 0.20
+      min_vx: 0.15
+      max_vy: 0.17
       min_vy: 0.13
 
       # ── 수렴 임계값 ──────────────────────────────────────────
-      thr_yaw:         0.013
-      thr_center:      0.008
-      thr_dist:        0.008
-      thr_diff:        0.010
+      thr_yaw:         0.015
+      thr_center:      0.010
+      thr_dist:        0.010
+      thr_diff:        0.015
       required_stable: 3
 
       # ── 페이즈 전환 ──────────────────────────────────────────
@@ -223,11 +223,11 @@ aruco_aligner_node:
 
     # ── 랙별 ref값 (순서: 랙1, 랙2, 랙3, 랙4, 랙5) ──────────────
     # 랙3~5는 측정값 없어서 임시로 랙1값 사용 → 측정 후 교체
-    rack_ref_x:           [-0.024, -0.030, -0.030, -0.030, -0.030]
-    rack_ref_yaw_left:    [ 0.007, -0.010,  0.007,  0.007,  0.007]
-    rack_ref_yaw_right:   [-0.005, -0.012, -0.005, -0.005, -0.005]
-    rack_target_avg_dist: [ 0.597,  0.590,  0.597,  0.597,  0.597]
-    rack_target_z_diff:   [ 0.014,  0.014,  0.014,  0.014,  0.014]
+    rack_ref_x:           [0.001, 0.001, 0.001, 0.001, 0.001]
+    rack_ref_yaw_left:    [-0.002, -0.002, -0.002, -0.002, -0.002]
+    rack_ref_yaw_right:   [0.001, 0.001, 0.001, 0.001, 0.001]
+    rack_target_avg_dist: [0.604, 0.604, 0.604, 0.604, 0.604]
+    rack_target_z_diff:   [0.013, 0.013, 0.013, 0.013, 0.013]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # zebra_scanner_node

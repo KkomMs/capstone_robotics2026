@@ -158,7 +158,7 @@ controller_server:
       # ── 주행 모드  ─────────────────────────────
       reversing_mode: false         # 후진 모드
       point_turning_mode: true      # 제자리 회전 모드
-      turn_start_threshold: 45.0    # [제자리 회전 모드] 회전 시작 각도 [deg]
+      turn_start_threshold: 90.0    # [제자리 회전 모드] 회전 시작 각도 [deg]
       align_tolerance: 4.0          # [제자리 회전 모드] 회전 완료 판정 각도 [deg]
       turn_decel_threshold: 15.0    # [제자리 회전 모드] 회전 감속 시작 각도 [deg]
       # ── cost function 가중치 ───────────────────

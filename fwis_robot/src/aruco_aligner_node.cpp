@@ -536,14 +536,21 @@ private:
             }
         } else if (phase_ == Phase::YAW_SETTLE) {
             PublishStop();
-            bool settle_done = yaw_settle_t_.nanoseconds() > 0 &&
-                (this->get_clock()->now() - yaw_settle_t_).seconds() >= p_.yaw_settle_time;
-            if (settle_done) {
-                yaw_settle_ok_count_ = yaw_enter ? yaw_settle_ok_count_ + 1 : 0;
-                if (yaw_settle_ok_count_ >= p_.yaw_settle_required_count) {
-                    phase_ = Phase::X; yaw_locked_ = true;
-                    x_phase_enter_t_ = this->get_clock()->now();
-                    RCLCPP_INFO(this->get_logger(), "[ArucoAligner] YAW_SETTLE → X");
+            // 1개만 보일 때는 settle 조건 없이 바로 X로
+            if (!e.both_visible) {
+                phase_ = Phase::X; yaw_locked_ = true;
+                x_phase_enter_t_ = this->get_clock()->now();
+                RCLCPP_INFO(this->get_logger(), "[ArucoAligner] YAW_SETTLE → X (1개만 보임)");
+            } else {
+                bool settle_done = yaw_settle_t_.nanoseconds() > 0 &&
+                    (this->get_clock()->now() - yaw_settle_t_).seconds() >= p_.yaw_settle_time;
+                if (settle_done) {
+                    yaw_settle_ok_count_ = yaw_enter ? yaw_settle_ok_count_ + 1 : 0;
+                    if (yaw_settle_ok_count_ >= p_.yaw_settle_required_count) {
+                        phase_ = Phase::X; yaw_locked_ = true;
+                        x_phase_enter_t_ = this->get_clock()->now();
+                        RCLCPP_INFO(this->get_logger(), "[ArucoAligner] YAW_SETTLE → X");
+                    }
                 }
             }
         } else if (phase_ == Phase::X && yaw_ok && center_ok) {
