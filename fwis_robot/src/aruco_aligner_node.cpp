@@ -386,6 +386,7 @@ private:
         yaw_ok_count_        = 0;
         yaw_locked_          = false;
         yaw_settle_ok_count_ = 0;
+        was_both_visible_    = false;
         x_phase_enter_t_     = rclcpp::Time(0, 0, RCL_ROS_TIME);
         yaw_settle_t_        = rclcpp::Time(0, 0, RCL_ROS_TIME);
         align_start_t_       = this->get_clock()->now();
@@ -550,6 +551,22 @@ private:
             RCLCPP_INFO(this->get_logger(), "[ArucoAligner] X → Z");
         }
 
+        // ── 1개 보이다가 2개 보이면 무조건 SEARCH → YAW 재시작 ─
+        if (!e.both_visible) {
+            was_both_visible_ = false;
+        }
+        if (e.both_visible && !was_both_visible_ &&
+            (phase_ == Phase::YAW || phase_ == Phase::YAW_SETTLE ||
+             phase_ == Phase::X   || phase_ == Phase::Z)) {
+            RCLCPP_INFO(this->get_logger(),
+                "[ArucoAligner] 마커 2개 감지! → SEARCH → YAW 재시작");
+            was_both_visible_ = true;
+            phase_ = Phase::SEARCH;
+            PublishStop();
+            return;
+        }
+        if (e.both_visible) was_both_visible_ = true;
+
         // ── Z 페이즈: 1개만 보이면 SEARCH ──────────────────────
         if (phase_ == Phase::Z && dist_ok && !e.both_visible) {
             RCLCPP_INFO(this->get_logger(),
@@ -668,6 +685,7 @@ private:
         last_yaw_spd_ = 0.0;
         yaw_lost_recovery_ = false;
         marker_was_lost_   = false;
+        was_both_visible_  = false;
         l1_ = r1_ = MF{};
         l1_t_ = r1_t_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
         x_phase_enter_t_ = yaw_settle_t_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
@@ -689,6 +707,7 @@ private:
     double last_yaw_spd_       = 0.0;   // YAW 중 마커 소실 시 마지막 회전 방향
     bool   yaw_lost_recovery_  = false; // 마커 소실 후 X 강제 전환 플래그
     bool   marker_was_lost_    = false; // X 중 마커 재인식 감지용
+    bool   was_both_visible_   = false; // 2개 동시 인식 여부 추적
 
     MF l1_, r1_;
     rclcpp::Time l1_t_{0,0,RCL_ROS_TIME}, r1_t_{0,0,RCL_ROS_TIME};

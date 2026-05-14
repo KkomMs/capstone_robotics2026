@@ -153,8 +153,8 @@ controller_server:
       control_period: 0.02         # 50 [Hz]
       prediction_horizon: 10       # 예측 구간
       max_steer_angle: 180.0       # [deg]
-      goal_decel_radius: 0.8       # goal 감속 시작 거리 [m]
-      goal_min_approach_vel: 0.18  # goal 최소 접근 속도 [m/s]
+      goal_decel_radius: 1.0       # goal 감속 시작 거리 [m]
+      goal_min_approach_vel: 0.15  # goal 최소 접근 속도 [m/s]
       # ── 주행 모드  ─────────────────────────────
       reversing_mode: false         # 후진 모드
       point_turning_mode: true      # 제자리 회전 모드

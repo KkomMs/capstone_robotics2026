@@ -470,6 +470,8 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   }
 
   // ── 5. goal 근접 감속 ───────────────────────────────────────────────
+  current_v_ref_ = V_ref_;
+
   geometry_msgs::msg::PoseStamped goal_pose_odom;
   if (transformPose(tf_, costmap_ros_->getGlobalFrameID(),
         global_plan_.poses.back(), goal_pose_odom, transform_tolerance_))
@@ -520,7 +522,7 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   const double cost_now = use_footprint_collision_ ? footprintCostmapCost(current_state) : costmapCost(current_state.x, current_state.y);
   if (cost_now >= 0.90) {
     // INSCRIBED 근처 감속
-    current_v_ref_ = V_ref_ * slowdown_ratio_;
+    current_v_ref_ *= slowdown_ratio_;
     RCLCPP_INFO(logger_,
       "Near INSCRIBED (cost=%.2f). Slowing to %.2f m/s", cost_now, current_v_ref_);
   }
