@@ -13,6 +13,7 @@
 
 #include "scanner_interfaces/msg/barcode_event.hpp"
 #include "scanner_interfaces/msg/tilt_state.hpp"
+#include "ros2_aruco_interfaces/msg/aruco_markers.hpp"
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/bool.hpp>
 
@@ -44,6 +45,7 @@ enum class MotorState {
     P1_SWEEP,
     P2_STEP_MOVE, P2_STEP_WAIT,
     P3_STEP_MOVE, P3_STEP_WAIT,
+    FAST_END,     // vel=1로 끝까지 쭉 올라가기 (step 없음)
     RETURNING, DONE
 };
 
@@ -103,6 +105,19 @@ public:
             "/barcode/unit_event", rclcpp::QoS(100),
             [this](const scanner_interfaces::msg::BarcodeEvent::SharedPtr msg) {
                 OnBarcodeEvent(*msg);
+            });
+
+        sub_aruco_left_ = this->create_subscription<ros2_aruco_interfaces::msg::ArucoMarkers>(
+            "/aruco_markers_left", qos,
+            [this](const ros2_aruco_interfaces::msg::ArucoMarkers::SharedPtr msg) {
+                if (!msg->marker_ids.empty())
+                    current_rack_no_ = static_cast<int>(msg->marker_ids[0]);
+            });
+        sub_aruco_right_ = this->create_subscription<ros2_aruco_interfaces::msg::ArucoMarkers>(
+            "/aruco_markers_right", qos,
+            [this](const ros2_aruco_interfaces::msg::ArucoMarkers::SharedPtr msg) {
+                if (!msg->marker_ids.empty())
+                    current_rack_no_ = static_cast<int>(msg->marker_ids[0]);
             });
 
         sub_alignment_done_ = this->create_subscription<std_msgs::msg::Bool>(
@@ -343,6 +358,15 @@ private:
         SendStep(ax, ax.end, ax.p3_step);
     }
 
+    // P2 끝나고 vel=1로 end까지 쭉 올라가기 (step 없음, 랙3 오른쪽 제외)
+    void StartFastEnd(MotorAxis & ax)
+    {
+        ax.goal_tick = ax.end;
+        ax.state     = MotorState::FAST_END;
+        WriteVelGoal(ax.id, 1, ax.end);
+        RCLCPP_INFO(get_logger(), "[%s] FastEnd vel=1 goal=%d (step 없음)", ax.name.c_str(), ax.end);
+    }
+
     // ── [수정] 복귀 시작 시 해당 축 summary 출력 ──────────────
     void StartReturn(MotorAxis & ax)
     {
@@ -386,8 +410,16 @@ private:
         }
         if (ax.state == MotorState::P2_STEP_MOVE || ax.state == MotorState::P2_STEP_WAIT) {
             if (ax.current_tick <= ax.p2_end + p_.arrive_threshold) {
-                RCLCPP_INFO(get_logger(), "[%s] P2 done → P3", ax.name.c_str());
-                StartP3(ax); return;
+                // 오른쪽 스캐너이고 랙 3번(마커ID=3)이면 P3, 나머지는 FastEnd
+                bool is_right = (&ax == &right_);
+                if (is_right && current_rack_no_ == 3) {
+                    RCLCPP_INFO(get_logger(), "[%s] P2 done → P3 (랙3 오른쪽)", ax.name.c_str());
+                    StartP3(ax);
+                } else {
+                    RCLCPP_INFO(get_logger(), "[%s] P2 done → FastEnd vel=1", ax.name.c_str());
+                    StartFastEnd(ax);
+                }
+                return;
             }
             ax.state = MotorState::P2_STEP_MOVE;
             SendStep(ax, ax.p2_end, ax.p2_step); return;
@@ -476,6 +508,11 @@ private:
             RCLCPP_INFO(get_logger(), "[%s] P1 done → P2", ax.name.c_str());
             StartP2(ax); break;
         }
+        case MotorState::FAST_END: {
+            if (!ax.arrived(p_.arrive_threshold)) return;
+            RCLCPP_INFO(get_logger(), "[%s] FastEnd done → return", ax.name.c_str());
+            StartReturn(ax); break;
+        }
         case MotorState::RETURNING: {
             if (!ax.arrived(p_.arrive_threshold)) return;
             RCLCPP_INFO(get_logger(), "[%s] returned", ax.name.c_str());
@@ -545,7 +582,10 @@ private:
     rclcpp::Publisher<scanner_interfaces::msg::TiltState>::SharedPtr       pub_tilt_;
     rclcpp::Subscription<scanner_interfaces::msg::BarcodeEvent>::SharedPtr sub_barcode_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr                   sub_alignment_done_;
+    rclcpp::Subscription<ros2_aruco_interfaces::msg::ArucoMarkers>::SharedPtr sub_aruco_left_;
+    rclcpp::Subscription<ros2_aruco_interfaces::msg::ArucoMarkers>::SharedPtr sub_aruco_right_;
     rclcpp::TimerBase::SharedPtr timer_;
+    int current_rack_no_ = -1;  // 현재 랙 번호 (마커 ID)
 };
 
 int main(int argc, char ** argv)

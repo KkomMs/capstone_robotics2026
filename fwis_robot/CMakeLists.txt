@@ -168,6 +168,7 @@ ament_target_dependencies(dynamixel_scan_node
   rclcpp
   std_msgs
   scanner_interfaces
+  ros2_aruco_interfaces
 )
 
 # ====================================================

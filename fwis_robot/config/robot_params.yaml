@@ -101,9 +101,9 @@ defaults:
       min_vy: 0.13
 
       # ── 수렴 임계값 ──────────────────────────────────────────
-      thr_yaw:         0.018
+      thr_yaw:         0.015
       thr_center:      0.010
-      thr_dist:        0.015
+      thr_dist:        0.010
       thr_diff:        0.010
       required_stable: 3
 
@@ -169,10 +169,10 @@ defaults:
       dxl_right_start:  1470
       dxl_right_p0_end: 1350
       dxl_right_p1_end:  530
-      dxl_right_p2_end:  270
+      dxl_right_p2_end:  250
       dxl_right_end:     150
 
-      dxl_left_vel_p1:     2
+      dxl_left_vel_p1:     4
       dxl_left_vel_step:   1
       dxl_left_vel_return: 10
 
@@ -181,10 +181,10 @@ defaults:
       dxl_right_vel_return: 10
 
       dxl_left_p0_step:  40
-      dxl_left_p2_step:  10
+      dxl_left_p2_step:  20
       dxl_left_p3_step:   3
       dxl_right_p0_step: 40
-      dxl_right_p2_step: 10
+      dxl_right_p2_step: 20
       dxl_right_p3_step:  3
 
       dxl_left_p2_is_sweep:  false
@@ -223,11 +223,11 @@ aruco_aligner_node:
 
     # ── 랙별 ref값 (순서: 랙1, 랙2, 랙3, 랙4, 랙5) ──────────────
     # 랙3~5는 측정값 없어서 임시로 랙1값 사용 → 측정 후 교체
-    rack_ref_x:           [-0.024, -0.030, -0.030, -0.030, -0.030]
-    rack_ref_yaw_left:    [ 0.007, -0.010,  0.007,  0.007,  0.007]
-    rack_ref_yaw_right:   [-0.005, -0.012, -0.005, -0.005, -0.005]
-    rack_target_avg_dist: [ 0.597,  0.590,  0.597,  0.597,  0.597]
-    rack_target_z_diff:   [ 0.014,  0.014,  0.014,  0.014,  0.014]
+    rack_ref_x:           [-0.024, -0.030,  0.006,  0.005,  0.004]
+    rack_ref_yaw_left:    [ 0.007, -0.010,  0.005,  0.006,  0.014]
+    rack_ref_yaw_right:   [-0.005, -0.012,  0.013,  0.002,  0.010]
+    rack_target_avg_dist: [ 0.597,  0.590,  0.590,  0.595,  0.598]
+    rack_target_z_diff:   [ 0.014,  0.014,  0.012,  0.017,  0.011]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # zebra_scanner_node
