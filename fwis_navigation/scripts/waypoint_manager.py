@@ -173,6 +173,9 @@ class MissionBridge(Node):
             Bool, '/alignment_done', self._on_alignment_done, qos)
         self.create_subscription(
             Bool, '/scan_done', self._on_scan_done, qos)
+        self.create_subscription(
+            Bool, '/cancel_assisted_teleop',
+            self._on_cancel_teleop, qos)
 
         # [추가] amcl_pose 구독
         self.create_subscription(
@@ -182,6 +185,7 @@ class MissionBridge(Node):
         self.aruco_detected = threading.Event()
         self.alignment_done = threading.Event()
         self.scan_done      = threading.Event()
+        self.cancel_teleop_requested = threading.Event()
 
         # [추가] amcl_pose 저장용
         self.amcl_lock = threading.Lock()
@@ -204,7 +208,6 @@ class MissionBridge(Node):
         self._heading_only_mode = False
 
     # ── 콜백 ───────────────────────────────────────────────────────────────
-
     # [추가] amcl_pose 콜백
     def _on_amcl_pose(self, msg: PoseWithCovarianceStamped):
         o = msg.pose.pose.orientation
@@ -236,8 +239,12 @@ class MissionBridge(Node):
             self.get_logger().info('[MissionBridge] 스캔 완료 ✓')
             self.scan_done.set()
 
-    # ── 헬퍼 ───────────────────────────────────────────────────────────────
+    def _on_cancel_teleop(self, msg: Bool):
+        if msg.data:
+            self.get_logger().info('[MissionBridge] AssistedTeleop 취소 요청 수신')
+            self.cancel_teleop_requested.set()
 
+    # ── 헬퍼 ───────────────────────────────────────────────────────────────
     # [추가] initialpose 보정 메서드
     def correct_pose(self):
         idx = self.marker_pair_idx
@@ -468,12 +475,42 @@ def main():
             time.sleep(1.0)
             # i를 증가시키지 않아 동일 waypoint 재시도
 
-    print('\n[Mission] ★★★ 전체 임무 완료 ★★★')
+    print('\n[Mission] ★★★ 전체 waypoint 주행 완료 ★★★')
 
     bridge.stop_publishing()
+
+    # ── AssistedTeleop 모드 진입 ─────────────────────────
+    print('[Mission] AssistedTeleop 모드 진입 - 조이스틱으로 조종 가능')
+    print('[Mission] 종료하려면 /cancel_assisted_teleop topic에 True publish.')
+
+    # 조이스틱 조종 허용 시간
+    TELEOP_TIME_ALLOWANCE = 300     # 초
+
+    try:
+        navigator.assistedTeleop(TELEOP_TIME_ALLOWANCE)
+
+        while not navigator.isTaskComplete():
+            # cancel 토픽 체크
+            if bridge.cancel_teleop_requested.is_set():
+                print('[Mission] AssistedTeleop 취소 요청 수신')
+                navigator.cancelTask()
+                break
+            time.sleep(0.5)
+        
+        result = navigator.getResult()
+        if result == TaskResult.SUCCEEDED:
+            print('[Mission] AssistedTeleop 정상 종료')
+        elif result == TaskResult.CANCELED:
+            print('[Mission] AssistedTeleop 취소 완료')
+        elif result == TaskResult.FAILED:
+            print('[Mission] AssistedTeleop 실패')
+    
+    except Exception as e:
+        print(f'[Mission] AssistedTeleop exception: {e}')
+
+    print('\n[Mission] ★★★ waypoint manager 종료 ★★★')
     executor.shutdown()
     rclpy.shutdown()
-
 
 if __name__ == '__main__':
     main()
