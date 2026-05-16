@@ -12,6 +12,8 @@
  * [수정3] YAW 제어/판정을 평균값(e_yaw) 기준으로 변경
  * [수정4] 1개 마커일 때도 YAW_SETTLE 거치도록 수정 (오버슈트 방지)
  * [수정5] UpdateFilter에서 yaw 이상값(마커 뒤집힘) 필터링 추가
+ * [수정6] YAW 브레이크 밴드 안에서도 ApplyMinAbs 적용 → 최소 속도 보장
+ *         (오차 작아도 모터 데드존 탈출 가능하게)
  */
 
 #include <algorithm>
@@ -162,26 +164,26 @@ private:
         int    marker_id_left  = 2;
         int    marker_id_right = 1;
 
-        double kp_w = 3.0, kp_x = 0.2, kp_y = 0.2, kp_diff = 0.2;
-        double max_w = 0.15, min_w = 0.10;
-        double max_vx = 0.15, min_vx = 0.10;
-        double max_vy = 0.15, min_vy = 0.10;
+        double kp_w = 2.0, kp_x = 0.2, kp_y = 0.2, kp_diff = 0.2;
+        double max_w = 0.20, min_w = 0.17;
+        double max_vx = 0.17, min_vx = 0.13;
+        double max_vy = 0.17, min_vy = 0.13;
 
         double thr_yaw = 0.018, thr_center = 0.015;
-        double thr_dist = 0.015, thr_diff = 0.015;
+        double thr_dist = 0.010, thr_diff = 0.010;
         int    required_stable = 3;
 
-        double thr_yaw_enter_x       = 0.015;
-        double thr_yaw_back_to_yaw   = 0.030;
+        double thr_yaw_enter_x       = 0.020;
+        double thr_yaw_back_to_yaw   = 0.025;
         int    yaw_ok_required_count = 3;
         double x_phase_min_hold_time = 0.7;
         double yaw_brake_band        = 0.03;
-        double yaw_brake_max_w       = 0.05;
-        double yaw_settle_time       = 0.20;
+        double yaw_brake_max_w       = 0.17;
+        double yaw_settle_time       = 0.50;
         int    yaw_settle_required_count = 2;
 
         double marker_timeout = 1.5;
-        double lpf_alpha      = 0.5;
+        double lpf_alpha      = 0.3;
         double outlier_thr    = 0.5;
 
         double sign_yaw = -1.0, sign_x = 1.0;
@@ -343,10 +345,9 @@ private:
                (this->get_clock()->now() - t).seconds() <= p_.marker_timeout;
     }
 
-    // ★ [수정5] yaw 이상값(마커 뒤집힘) 필터링 추가
     void UpdateFilter(MF & f, rclcpp::Time & t, int id, double nx, double nz, double nyaw)
     {
-        // yaw 절댓값이 90도 초과면 마커 뒤집혀서 인식된 것 → 버림
+        // yaw 절댓값 90도 초과 → 마커 뒤집힘 → 버림
         if (std::fabs(nyaw) > kYawFlipThreshold) {
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 500,
                 "[ArucoAligner] yaw 이상값 차단: %.3f rad (마커 뒤집힘 의심)", nyaw);
@@ -449,7 +450,6 @@ private:
         return e;
     }
 
-    // 평균값 기준 판정
     bool IsYawEnterOk(const Errors & e) {
         if (!e.ok) return false;
         return std::fabs(e.e_yaw) < p_.thr_yaw_enter_x;
@@ -458,10 +458,26 @@ private:
         if (!e.ok) return false;
         return std::fabs(e.e_yaw) < p_.thr_yaw;
     }
-    // YAW_SETTLE 복귀는 좌우 개별값으로 (한쪽이 크게 틀어진 경우 감지)
     bool IsYawBad(const Errors & e) {
         return std::fabs(e.e_yaw_l) > p_.thr_yaw_back_to_yaw ||
                std::fabs(e.e_yaw_r) > p_.thr_yaw_back_to_yaw;
+    }
+
+    // ★ [수정6] YAW 속도 계산 함수 분리
+    // 브레이크 밴드 안/밖 모두 ApplyMinAbs 적용 → 최소 속도 보장
+    double CalcYawSpeed(double yaw_err)
+    {
+        double spd = p_.sign_yaw * p_.kp_w * yaw_err;
+        if (std::fabs(yaw_err) < p_.yaw_brake_band) {
+            // 브레이크 밴드 안: yaw_brake_max_w로 상한 제한 + min_w 보장
+            spd = ApplyMinAbs(
+                Clamp(spd, -p_.yaw_brake_max_w, p_.yaw_brake_max_w),
+                p_.min_w);
+        } else {
+            // 일반 구간: max_w로 상한 제한 + min_w 보장
+            spd = ApplyMinAbs(Clamp(spd, -p_.max_w, p_.max_w), p_.min_w);
+        }
+        return spd;
     }
 
     void ControlLoop()
@@ -479,15 +495,11 @@ private:
         if (!e.ok) {
             if (phase_ == Phase::YAW && !yaw_lost_recovery_) {
                 if (std::fabs(last_e_yaw_) > p_.thr_yaw) {
-                    double spd = p_.sign_yaw * p_.kp_w * last_e_yaw_;
-                    if (std::fabs(last_e_yaw_) < p_.yaw_brake_band)
-                        spd = Clamp(spd, -p_.yaw_brake_max_w, p_.yaw_brake_max_w);
-                    else
-                        spd = ApplyMinAbs(Clamp(spd, -p_.max_w, p_.max_w), p_.min_w);
+                    double spd = CalcYawSpeed(last_e_yaw_);
                     last_e_yaw_ -= spd * 0.02;
                     last_yaw_spd_ = spd;
                     RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 500,
-                        "[ArucoAligner] 마커 없음(YAW중) → last_e_yaw=%.4f 만큼 계속 회전", last_e_yaw_);
+                        "[ArucoAligner] 마커 없음(YAW중) → last_e_yaw=%.4f 계속 회전", last_e_yaw_);
                     PublishFixed(kSpinSteerAngles, kSpinInwheelSign, spd);
                 } else {
                     RCLCPP_WARN(this->get_logger(),
@@ -504,7 +516,7 @@ private:
                     spd = std::copysign(spd, p_.sign_x * last_e_x_);
                 }
                 RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 500,
-                    "[ArucoAligner] 마커 없음(X중) → last_e_x=%.3f 방향으로 이동 spd=%.3f",
+                    "[ArucoAligner] 마커 없음(X중) → last_e_x=%.3f 방향 spd=%.3f",
                     last_e_x_, spd);
                 PublishFixed(kForwardSteerAngles, kSameInwheelSign, spd);
             } else {
@@ -565,7 +577,6 @@ private:
         if (phase_ == Phase::YAW) {
             yaw_ok_count_ = yaw_enter ? yaw_ok_count_ + 1 : 0;
             if (yaw_ok_count_ >= p_.yaw_ok_required_count) {
-                // ★ [수정4] 1개든 2개든 동일하게 YAW_SETTLE로 전환
                 phase_ = Phase::YAW_SETTLE;
                 yaw_ok_count_ = 0; yaw_settle_ok_count_ = 0;
                 yaw_settle_t_ = this->get_clock()->now();
@@ -655,12 +666,8 @@ private:
         switch (phase_) {
         case Phase::YAW:
         case Phase::YAW_FINE: {
-            double yaw_err = e.e_yaw;
-            double spd = p_.sign_yaw * p_.kp_w * yaw_err;
-            if (std::fabs(yaw_err) < p_.yaw_brake_band)
-                spd = Clamp(spd, -p_.yaw_brake_max_w, p_.yaw_brake_max_w);
-            else
-                spd = ApplyMinAbs(Clamp(spd, -p_.max_w, p_.max_w), p_.min_w);
+            // ★ [수정6] CalcYawSpeed 사용 → 브레이크 밴드 안에서도 min_w 보장
+            double spd = CalcYawSpeed(e.e_yaw);
             last_yaw_spd_ = spd;
             PublishFixed(kSpinSteerAngles, kSpinInwheelSign, spd);
             break;
