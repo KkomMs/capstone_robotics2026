@@ -87,18 +87,18 @@ defaults:
       marker_id_right: 1
 
       # ── PID 게인 ────────────────────────────────────────────
-      kp_w:    2.0
+      kp_w:    1.0
       kp_x:    0.2
       kp_y:    0.2
       kp_diff: 0.2
 
       # ── 속도 한계 ────────────────────────────────────────────
-      max_w:  0.20
-      min_w:  0.17
-      max_vx: 0.17
-      min_vx: 0.13
-      max_vy: 0.17
-      min_vy: 0.13
+      max_w:  0.17
+      min_w:  0.13
+      max_vx: 0.15
+      min_vx: 0.10
+      max_vy: 0.15
+      min_vy: 0.10
 
       # ── 수렴 임계값 ──────────────────────────────────────────
       thr_yaw:         0.018
@@ -114,8 +114,8 @@ defaults:
       x_phase_min_hold_time: 0.7
 
       # ── YAW 브레이크 ─────────────────────────────────────────
-      yaw_brake_band:            0.03
-      yaw_brake_max_w:           0.17
+      yaw_brake_band:            0.05
+      yaw_brake_max_w:           0.13
       yaw_settle_time:           0.50
       yaw_settle_required_count: 2
 
