@@ -87,14 +87,15 @@ def build_waypoints(navigator: BasicNavigator) -> list:
 
     coords = [
         # (x,     y,     yaw)
-        # ( 2.8,  0.0,  0.0),
-        # ( 3.76, -4.99, -half_turn),
-        # (-0.2,  -2.58,  half_turn),
-        # (-0.2,  -2.58,  0.0),
-        # ( 3.54, -2.62,  0.0),
+        ( 2.8,  0.0,  0.0),
+        ( 3.76, -4.99, -half_turn),
+        (-0.2,  -2.50,  half_turn),
+        (-0.2,  -2.50,  0.0),
+        # ( 3.54, -2.50,  0.0),
+        # ( 0.23, -0.05, -a_round),
         # ( 0.23, -0.05, 0.0),
         #### 자세정렬 테스트용
-        (3.4, -2.7, 0.0),
+        # (3.4, -2.7, 0.0),
     ]
 
     return [make_pose(navigator, x, y, yaw) for x, y, yaw in coords]

@@ -78,50 +78,50 @@ defaults:
       alignment_mode: "C"
 
       # ── C 모드 기준값 ────────────────────────────────────────
-      ref_x:             0.001
-      ref_yaw_left:     -0.002
-      ref_yaw_right:     0.001
-      target_avg_dist:   0.604
-      target_z_diff:     0.013
+      ref_x:            -0.024
+      ref_yaw_left:      0.000
+      ref_yaw_right:    -0.001   
+      target_avg_dist:   0.600
+      target_z_diff:    -0.008
       marker_id_left:  2
       marker_id_right: 1
 
       # ── PID 게인 ────────────────────────────────────────────
-      kp_w:    3.0
+      kp_w:    2.0
       kp_x:    0.2
       kp_y:    0.2
       kp_diff: 0.2
 
       # ── 속도 한계 ────────────────────────────────────────────
       max_w:  0.20
-      min_w:  0.15
-      max_vx: 0.20
-      min_vx: 0.15
+      min_w:  0.17
+      max_vx: 0.17
+      min_vx: 0.13
       max_vy: 0.17
       min_vy: 0.13
 
       # ── 수렴 임계값 ──────────────────────────────────────────
-      thr_yaw:         0.015
-      thr_center:      0.010
+      thr_yaw:         0.018
+      thr_center:      0.015
       thr_dist:        0.010
-      thr_diff:        0.015
+      thr_diff:        0.010
       required_stable: 3
 
       # ── 페이즈 전환 ──────────────────────────────────────────
-      thr_yaw_enter_x:       0.015
-      thr_yaw_back_to_yaw:   0.030
+      thr_yaw_enter_x:       0.020
+      thr_yaw_back_to_yaw:   0.025
       yaw_ok_required_count: 3
       x_phase_min_hold_time: 0.7
 
       # ── YAW 브레이크 ─────────────────────────────────────────
       yaw_brake_band:            0.03
-      yaw_brake_max_w:           0.05
+      yaw_brake_max_w:           0.17
       yaw_settle_time:           0.50
       yaw_settle_required_count: 2
 
       # ── 마커 필터 ────────────────────────────────────────────
       marker_timeout: 1.5
-      lpf_alpha:      0.5
+      lpf_alpha:      0.3
       outlier_thr:    0.5
 
       # ── 부호 설정 ────────────────────────────────────────────
@@ -223,11 +223,11 @@ aruco_aligner_node:
 
     # ── 랙별 ref값 (순서: 랙1, 랙2, 랙3, 랙4, 랙5) ──────────────
     # 랙3~5는 측정값 없어서 임시로 랙1값 사용 → 측정 후 교체
-    rack_ref_x:           [0.001, 0.001, 0.001, 0.001, 0.001]
-    rack_ref_yaw_left:    [-0.002, -0.002, -0.002, -0.002, -0.002]
-    rack_ref_yaw_right:   [0.001, 0.001, 0.001, 0.001, 0.001]
-    rack_target_avg_dist: [0.604, 0.604, 0.604, 0.604, 0.604]
-    rack_target_z_diff:   [0.013, 0.013, 0.013, 0.013, 0.013]
+    rack_ref_x:           [-0.024, -0.024, -0.024, -0.024, -0.024]
+    rack_ref_yaw_left:    [ 0.000,  0.000,  0.000,  0.000,  0.000]
+    rack_ref_yaw_right:   [-0.001, -0.001, -0.001, -0.001, -0.001]  # ← 전부 수정
+    rack_target_avg_dist: [ 0.600,  0.600,  0.600,  0.600,  0.600]
+    rack_target_z_diff:   [-0.008, -0.008, -0.008, -0.008, -0.008]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # zebra_scanner_node
