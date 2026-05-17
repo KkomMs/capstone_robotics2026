@@ -54,21 +54,54 @@ def normalize_angle(angle: float) -> float:
     while angle < -math.pi: angle += 2.0 * math.pi
     return angle
 
-def build_waypoints(navigator) -> list:
+def build_waypoints(navigator: BasicNavigator) -> list:
+    """
+    - 'goal': (x, y, yaw) - 최종 목표점
+    - 'via': [(x, y, yaw), ...] - 경유점 리스트
+    'via'가 비어있음: goToPose()
+    'via'가 있음: goThroughPoses()
+    """
     half_turn = 1.5708
     a_round   = 3.14
     coords = [
-        ( 2.8,  0.0,  0.0),
-        ( 3.76, -4.99, -half_turn),
-        (-0.2,  -2.50,  half_turn),
-        (-0.2,  -2.50,  0.0),
-        ( 3.54, -2.75,  0.0),
-        ( 0.23, -0.05, -a_round),
-        ( 0.23, -0.05, 0.0),
+        # wp1: 랙 입구
+        {
+            'goal': (-0.2, -2.50, half_turn),
+            'via': [
+                (2.8, 0.0, 0.0),    # 시작 지점 복도
+                #(),     # 창가 쪽 복도
+                #(),     # 마지막 복도
+            ],
+        },
+        # wp2: 랙 입구 정렬
+        {
+            'goal': (-0.2, -2.50, 0.0),
+            'via': [],
+        },
+        # wp3: 초기 위치
+        {
+            'goal': (0.23, -0.05, -a_round),
+            'via': [
+                (3.54, -2.75, 0.0),     # 랙 출구
+            ],
+        },
+        # wp4: 초기 위치 정렬
+        {
+            'goal': (0.23, -0.05, 0.0),
+            'via': [],
+        },
+
+        # ( 2.8,  0.0,  0.0),
+        # ( 3.76, -4.99, -half_turn),
+        # (-0.2,  -2.50,  half_turn),
+        # (-0.2,  -2.50,  0.0),
+        # ( 3.54, -2.75,  0.0),
+        # ( 0.23, -0.05, -a_round),
+        # ( 0.23, -0.05, 0.0),
         #### 자세정렬 테스트용
         # (3.54, -2.5, 0.0),
     ]
-    return [make_pose(navigator, x, y, yaw) for x, y, yaw in coords]
+    return coords
 
 XY_SAME_THRESHOLD      = 0.05
 YAW_DIFF_THRESHOLD_DEG = 5.0
@@ -76,13 +109,15 @@ YAW_DIFF_THRESHOLD     = YAW_DIFF_THRESHOLD_DEG * math.pi / 180.0
 GENERAL_CHECKER_NAME   = "general_goal_checker"
 PRECISE_CHECKER_NAME   = "precise_goal_checker"
 
-def determine_goal_checker(prev_wp: PoseStamped, curr_wp: PoseStamped) -> str:
-    dx = curr_wp.pose.position.x - prev_wp.pose.position.x
-    dy = curr_wp.pose.position.y - prev_wp.pose.position.y
-    xy_dist  = math.sqrt(dx*dx + dy*dy)
-    prev_yaw = quaternion2yaw(prev_wp.pose.orientation)
-    curr_yaw = quaternion2yaw(curr_wp.pose.orientation)
-    yaw_diff = abs(normalize_angle(curr_yaw - prev_yaw))
+def determine_goal_checker(prev_goal: tuple, curr_goal: tuple) -> str:
+    px, py, pyaw = prev_goal
+    cx, cy, cyaw = curr_goal
+    
+    dx = cx - px
+    dy = cy - py
+    xy_dist = math.sqrt(dx * dx + dy * dy)
+    yaw_diff = abs(normalize_angle(cyaw - pyaw))
+
     if xy_dist < XY_SAME_THRESHOLD and yaw_diff > YAW_DIFF_THRESHOLD:
         print(f'  [GoalChecker] Heading-only → {PRECISE_CHECKER_NAME}')
         return PRECISE_CHECKER_NAME
@@ -287,33 +322,56 @@ def main():
     spin_thread = threading.Thread(target=executor.spin, daemon=True)
     spin_thread.start()
 
-    all_waypoints = build_waypoints(navigator)
+    all_waypoints = build_waypoints()
     total = len(all_waypoints)
 
     print(f'[Mission] 임무 시작: 총 {total}개 waypoint')
 
     i = 0
     while i < total:
-        wp = all_waypoints[i]
+        wp_info = all_waypoints[i]
+        goal_x, goal_y, goal_yaw = wp_info['goal']
+        via_list = wp_info.get('via', [])
+
+        # 1) GoalChecker 결정
+        goal_pose = make_pose(navigator, goal_x, goal_y, goal_yaw)
 
         if i == 0:
             checker = GENERAL_CHECKER_NAME
             print(f'  [GoalChecker] 첫 번째 waypoint → {checker}')
         else:
-            checker = determine_goal_checker(all_waypoints[i - 1], wp)
+            prev_goal = all_waypoints[i - 1]['goal']
+            checker = determine_goal_checker(prev_goal, wp_info['goal'])
 
         is_heading_only = (checker == PRECISE_CHECKER_NAME)
-        wp.header.stamp = navigator.get_clock().now().to_msg()
 
-        yaw_deg = math.degrees(quaternion2yaw(wp.pose.orientation))
-        print(f'\n[WP {i+1}/{total}] 이동: '
-              f'({wp.pose.position.x:.2f}, {wp.pose.position.y:.2f}, '
-              f'yaw={yaw_deg:.1f}°) [{checker}]')
+        yaw_deg = math.degrees(goal_yaw)
+        print(f'\n[WP {i + 1}/{total}] 이동 시작: '
+              f'({goal_x:.2f}, {goal_y:.2f}, yaw={yaw_deg:.1f}°) [{checker}]'
+              f'{" (via " + str(len(via_list)) + " points)" if via_list else ""}')
 
+        # 2) 플래그 초기화
         bridge.reset_flags()
-        navigator.goToPose(wp)
+
+        # 3) timestamp 갱신 및 navigation 호출
+        goal_pose.header.stamp = navigator.get_clock().now().to_msg()
+
+        if via_list:
+            # goThroughPoses
+            through_poses = []
+            for vx, vy, vyaw in via_list:
+                through_poses.append(make_pose(navigator, vx, vy, vyaw))
+            through_poses.append(goal_pose)
+            navigator.goThroughPoses(through_poses)
+            print(f'  → goThroughPoses ({len(through_poses)} poses)')
+        else:
+            # goToPose
+            navigator.goToPose(goal_pose)
+        
+        # 4) GoalChecker 반복 publish
         bridge.start_publishing(checker, is_heading_only)
 
+        # 5) 주행 모니터링
         wp_interrupted = False
         while not navigator.isTaskComplete():
 
@@ -329,7 +387,7 @@ def main():
 
                 # 2. heading 맞추기 → 완료 후 /aruco_start publish
                 #    (aruco_aligner가 /aruco_start 받으면 pause 걸고 정렬 시작)
-                align_heading(navigator, bridge, wp)
+                align_heading(navigator, bridge, goal_pose)
 
                 # 3. 정렬 완료 대기
                 print('[Mission] 정렬 완료 대기 중...')
@@ -359,7 +417,7 @@ def main():
             print('[Mission] ★ (task 완료 후) 마커 감지!')
 
             bridge.publish_pause(True)
-            align_heading(navigator, bridge, wp)
+            align_heading(navigator, bridge, goal_pose)
 
             print('[Mission] 정렬 완료 대기 중...')
             bridge.wait_for_alignment()
