@@ -54,7 +54,7 @@ def normalize_angle(angle: float) -> float:
     while angle < -math.pi: angle += 2.0 * math.pi
     return angle
 
-def build_waypoints(navigator: BasicNavigator) -> list:
+def build_waypoints(navigator) -> list:
     """
     - 'goal': (x, y, yaw) - 최종 목표점
     - 'via': [(x, y, yaw), ...] - 경유점 리스트
@@ -68,9 +68,9 @@ def build_waypoints(navigator: BasicNavigator) -> list:
         {
             'goal': (-0.2, -2.50, half_turn),
             'via': [
-                (2.8, 0.0, 0.0),    # 시작 지점 복도
-                #(),     # 창가 쪽 복도
-                #(),     # 마지막 복도
+                (2.8, 0.0, 0.0),             # 시작 지점 복도
+                (3.0, -5.0, -a_round),     # 복도
+                (1.0, -5.0, -a_round),     # 마지막 복도
             ],
         },
         # wp2: 랙 입구 정렬
@@ -78,14 +78,19 @@ def build_waypoints(navigator: BasicNavigator) -> list:
             'goal': (-0.2, -2.50, 0.0),
             'via': [],
         },
-        # wp3: 초기 위치
+        # wp3: 랙 출구
+        {
+            'goal': (3.54, -2.75, 0.0),
+            'via': [],
+        },
+        # wp4: 초기 위치
         {
             'goal': (0.23, -0.05, -a_round),
             'via': [
-                (3.54, -2.75, 0.0),     # 랙 출구
+                (2.8, 0.0, -a_round),
             ],
         },
-        # wp4: 초기 위치 정렬
+        # wp5: 초기 위치 정렬
         {
             'goal': (0.23, -0.05, 0.0),
             'via': [],
@@ -322,7 +327,7 @@ def main():
     spin_thread = threading.Thread(target=executor.spin, daemon=True)
     spin_thread.start()
 
-    all_waypoints = build_waypoints()
+    all_waypoints = build_waypoints(navigator)
     total = len(all_waypoints)
 
     print(f'[Mission] 임무 시작: 총 {total}개 waypoint')

@@ -93,8 +93,8 @@ defaults:
       kp_diff: 0.2
 
       # ── 속도 한계 ────────────────────────────────────────────
-      max_w:  0.17
-      min_w:  0.13
+      max_w:  0.19
+      min_w:  0.15
       max_vx: 0.15
       min_vx: 0.12
       max_vy: 0.15
@@ -102,8 +102,8 @@ defaults:
 
       # ── 수렴 임계값 ──────────────────────────────────────────
       thr_yaw:         0.010
-      thr_center:      0.005
-      thr_dist:        0.010
+      thr_center:      0.008
+      thr_dist:        0.008
       thr_diff:        0.010
       required_stable: 3
 
@@ -115,7 +115,7 @@ defaults:
 
       # ── YAW 브레이크 ─────────────────────────────────────────
       yaw_brake_band:            0.05
-      yaw_brake_max_w:           0.13
+      yaw_brake_max_w:           0.15
       yaw_settle_time:           0.50
       yaw_settle_required_count: 2
 
