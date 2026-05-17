@@ -78,9 +78,9 @@ defaults:
       alignment_mode: "C"
 
       # ── C 모드 기준값 ────────────────────────────────────────
-      ref_x:            -0.024
+      ref_x:             0.000
       ref_yaw_left:      0.000
-      ref_yaw_right:    -0.001   
+      ref_yaw_right:     0.000   
       target_avg_dist:   0.600
       target_z_diff:    -0.008
       marker_id_left:  2
@@ -96,13 +96,13 @@ defaults:
       max_w:  0.17
       min_w:  0.13
       max_vx: 0.15
-      min_vx: 0.10
+      min_vx: 0.12
       max_vy: 0.15
-      min_vy: 0.10
+      min_vy: 0.12
 
       # ── 수렴 임계값 ──────────────────────────────────────────
-      thr_yaw:         0.018
-      thr_center:      0.015
+      thr_yaw:         0.010
+      thr_center:      0.005
       thr_dist:        0.010
       thr_diff:        0.010
       required_stable: 3
@@ -129,6 +129,8 @@ defaults:
       sign_x:    +1.0
       sign_dist: -1.0
       sign_diff: +1.0
+
+      both_visible_required: 5
 
       # ── 스티어 동기화 ────────────────────────────────────────
       steer_position_tolerance: 1.5
@@ -223,9 +225,9 @@ aruco_aligner_node:
 
     # ── 랙별 ref값 (순서: 랙1, 랙2, 랙3, 랙4, 랙5) ──────────────
     # 랙3~5는 측정값 없어서 임시로 랙1값 사용 → 측정 후 교체
-    rack_ref_x:           [-0.024, -0.024, -0.024, -0.024, -0.024]
+    rack_ref_x:           [ 0.000,  0.000,  0.000,  0.000,  0.000]
     rack_ref_yaw_left:    [ 0.000,  0.000,  0.000,  0.000,  0.000]
-    rack_ref_yaw_right:   [-0.001, -0.001, -0.001, -0.001, -0.001]  # ← 전부 수정
+    rack_ref_yaw_right:   [ 0.000,  0.000,  0.000,  0.000,  0.000]  # ← 전부 수정
     rack_target_avg_dist: [ 0.600,  0.600,  0.600,  0.600,  0.600]
     rack_target_z_diff:   [-0.008, -0.008, -0.008, -0.008, -0.008]
 

@@ -7,13 +7,15 @@
  *   1개 보일 때: YAW → YAW_SETTLE → X → Z → SEARCH → 2개 보이면 YAW 재시작
  *   2개 보일 때: YAW → YAW_SETTLE → X → Z → YAW_FINE → 완료
  *
- * [수정1] X → Z 전환 조건: yaw_ok 제거, center_ok만으로 전환
+ * [수정1] X → Z 전환 조건: center_ok만으로 전환
  * [수정2] Z 완료 후 YAW_FINE 추가
  * [수정3] YAW 제어/판정을 평균값(e_yaw) 기준으로 변경
- * [수정4] 1개 마커일 때도 YAW_SETTLE 거치도록 수정 (오버슈트 방지)
+ * [수정4] 1개 마커일 때도 YAW_SETTLE 거치도록 수정
  * [수정5] UpdateFilter에서 yaw 이상값(마커 뒤집힘) 필터링 추가
- * [수정6] YAW 브레이크 밴드 안에서도 ApplyMinAbs 적용 → 최소 속도 보장
- *         (오차 작아도 모터 데드존 탈출 가능하게)
+ * [수정6] YAW 브레이크 밴드 안에서도 ApplyMinAbs 적용
+ * [수정7] both_visible 카운터 기반 안정화
+ * [수정8] 마커 감지 시 detected만 publish하고 /aruco_start 수신 후 정렬 시작
+ *         (waypoint_manager가 heading 맞춘 후 신호 보내면 그때 시작)
  */
 
 #include <algorithm>
@@ -42,7 +44,6 @@ constexpr std::array<double, 4> kCrabSteerAngles    = { 90.0, 90.0,  90.0,  90.0
 constexpr std::array<double, 4> kSpinInwheelSign = {-1.0, +1.0, -1.0, +1.0};
 constexpr std::array<double, 4> kSameInwheelSign = {+1.0, +1.0, +1.0, +1.0};
 
-// 마커 뒤집힘 판정 임계값 (90도)
 constexpr double kYawFlipThreshold = M_PI * 0.5;
 
 double Clamp(double v, double lo, double hi) { return std::max(lo, std::min(hi, v)); }
@@ -123,6 +124,15 @@ public:
                 ResetForNextCycle();
             });
 
+        // ★ [수정8] waypoint_manager로부터 정렬 시작 신호 수신
+        sub_aruco_start_ = this->create_subscription<std_msgs::msg::Bool>(
+            "/aruco_start", qos,
+            [this](const std_msgs::msg::Bool::SharedPtr msg) {
+                if (!msg->data) return;
+                RCLCPP_INFO(this->get_logger(), "[ArucoAligner] /aruco_start 수신 → 정렬 시작");
+                StartAlign();
+            });
+
         timer_ = this->create_wall_timer(
             std::chrono::milliseconds(20),
             std::bind(&ArucoAlignerNode::ControlLoop, this));
@@ -137,7 +147,7 @@ public:
 
 private:
     enum class Side  { LEFT, RIGHT };
-    enum class State { WAITING, ALIGNING, DONE };
+    enum class State { WAITING, DETECTED, ALIGNING, DONE };
     enum class Phase { YAW, YAW_SETTLE, X, Z, YAW_FINE, SEARCH };
 
     struct MF {
@@ -181,6 +191,7 @@ private:
         double yaw_brake_max_w       = 0.17;
         double yaw_settle_time       = 0.50;
         int    yaw_settle_required_count = 2;
+        int    both_visible_required = 5;
 
         double marker_timeout = 1.5;
         double lpf_alpha      = 0.3;
@@ -235,6 +246,7 @@ private:
         p_.yaw_brake_max_w       = g("yaw_brake_max_w");
         p_.yaw_settle_time       = g("yaw_settle_time");
         p_.yaw_settle_required_count = gi("yaw_settle_required_count");
+        p_.both_visible_required = gi("both_visible_required");
 
         p_.marker_timeout = g("marker_timeout");
         p_.lpf_alpha      = g("lpf_alpha");
@@ -274,7 +286,6 @@ private:
             };
 
             size_t n = std::min(lv.size(), rv.size());
-
             load_double_array("rack_ref_x",           ref_x_list,           n, p_.ref_x);
             load_double_array("rack_ref_yaw_left",    ref_yaw_left_list,    n, p_.ref_yaw_left);
             load_double_array("rack_ref_yaw_right",   ref_yaw_right_list,   n, p_.ref_yaw_right);
@@ -347,10 +358,9 @@ private:
 
     void UpdateFilter(MF & f, rclcpp::Time & t, int id, double nx, double nz, double nyaw)
     {
-        // yaw 절댓값 90도 초과 → 마커 뒤집힘 → 버림
         if (std::fabs(nyaw) > kYawFlipThreshold) {
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 500,
-                "[ArucoAligner] yaw 이상값 차단: %.3f rad (마커 뒤집힘 의심)", nyaw);
+                "[ArucoAligner] yaw 이상값 차단: %.3f rad", nyaw);
             return;
         }
         if (!f.valid) {
@@ -381,7 +391,7 @@ private:
             if (side == Side::LEFT  && id == p_.marker_id_left)  UpdateFilter(l1_, l1_t_, id, nx, nz, ny);
             if (side == Side::RIGHT && id == p_.marker_id_right) UpdateFilter(r1_, r1_t_, id, nx, nz, ny);
         }
-        TryStartAlign();
+        TryDetect();
     }
 
     bool ReadyToStart()
@@ -389,11 +399,25 @@ private:
         return (l1_.valid && IsFresh(l1_t_)) || (r1_.valid && IsFresh(r1_t_));
     }
 
-    void TryStartAlign()
+    // ★ [수정8] 마커 감지 시 detected만 publish하고 대기
+    void TryDetect()
     {
         if (state_ != State::WAITING || !ReadyToStart()) return;
+        state_ = State::DETECTED;
         std_msgs::msg::Bool det; det.data = true; detected_pub_->publish(det);
-        RCLCPP_INFO(this->get_logger(), "[ArucoAligner] 마커 감지 → 정렬 시작");
+        RCLCPP_INFO(this->get_logger(),
+            "[ArucoAligner] 마커 감지 → detected publish | /aruco_start 대기 중...");
+    }
+
+    // ★ [수정8] /aruco_start 수신 시 호출
+    void StartAlign()
+    {
+        if (state_ != State::DETECTED) {
+            RCLCPP_WARN(this->get_logger(),
+                "[ArucoAligner] /aruco_start 수신했지만 state가 DETECTED가 아님 (state=%d)",
+                static_cast<int>(state_));
+            return;
+        }
         PublishPause(true);
         state_               = State::ALIGNING;
         phase_               = Phase::YAW;
@@ -401,11 +425,13 @@ private:
         yaw_locked_          = false;
         yaw_settle_ok_count_ = 0;
         yaw_fine_ok_count_   = 0;
+        both_visible_count_  = 0;
         was_both_visible_    = false;
         x_phase_enter_t_     = rclcpp::Time(0, 0, RCL_ROS_TIME);
         yaw_settle_t_        = rclcpp::Time(0, 0, RCL_ROS_TIME);
         align_start_t_       = this->get_clock()->now();
         ++trial_count_;
+        RCLCPP_INFO(this->get_logger(), "[ArucoAligner] 정렬 시작");
     }
 
     Errors ComputeErrors()
@@ -463,18 +489,12 @@ private:
                std::fabs(e.e_yaw_r) > p_.thr_yaw_back_to_yaw;
     }
 
-    // ★ [수정6] YAW 속도 계산 함수 분리
-    // 브레이크 밴드 안/밖 모두 ApplyMinAbs 적용 → 최소 속도 보장
     double CalcYawSpeed(double yaw_err)
     {
         double spd = p_.sign_yaw * p_.kp_w * yaw_err;
         if (std::fabs(yaw_err) < p_.yaw_brake_band) {
-            // 브레이크 밴드 안: yaw_brake_max_w로 상한 제한 + min_w 보장
-            spd = ApplyMinAbs(
-                Clamp(spd, -p_.yaw_brake_max_w, p_.yaw_brake_max_w),
-                p_.min_w);
+            spd = ApplyMinAbs(Clamp(spd, -p_.yaw_brake_max_w, p_.yaw_brake_max_w), p_.min_w);
         } else {
-            // 일반 구간: max_w로 상한 제한 + min_w 보장
             spd = ApplyMinAbs(Clamp(spd, -p_.max_w, p_.max_w), p_.min_w);
         }
         return spd;
@@ -491,19 +511,17 @@ private:
 
         const Errors e = ComputeErrors();
 
-        // ── 마커 없음 처리 ──────────────────────────────────────
         if (!e.ok) {
             if (phase_ == Phase::YAW && !yaw_lost_recovery_) {
                 if (std::fabs(last_e_yaw_) > p_.thr_yaw) {
                     double spd = CalcYawSpeed(last_e_yaw_);
-                    last_e_yaw_ -= spd * 0.02;
+                    last_e_yaw_ -= std::copysign(std::fabs(spd) * 0.02, last_e_yaw_);
                     last_yaw_spd_ = spd;
                     RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 500,
                         "[ArucoAligner] 마커 없음(YAW중) → last_e_yaw=%.4f 계속 회전", last_e_yaw_);
                     PublishFixed(kSpinSteerAngles, kSpinInwheelSign, spd);
                 } else {
-                    RCLCPP_WARN(this->get_logger(),
-                        "[ArucoAligner] 마커 없음 → yaw 완료 → X 전환");
+                    RCLCPP_WARN(this->get_logger(), "[ArucoAligner] 마커 없음 → yaw 완료 → X 전환");
                     yaw_lost_recovery_ = true;
                     marker_was_lost_   = true;
                     phase_ = Phase::X;
@@ -512,57 +530,43 @@ private:
             } else if (phase_ == Phase::X) {
                 double spd = ApplyMinAbs(
                     Clamp(p_.sign_x * p_.min_vx, -p_.max_vx, p_.max_vx), p_.min_vx);
-                if (std::fabs(last_e_x_) > p_.thr_center) {
+                if (std::fabs(last_e_x_) > p_.thr_center)
                     spd = std::copysign(spd, p_.sign_x * last_e_x_);
-                }
                 RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 500,
-                    "[ArucoAligner] 마커 없음(X중) → last_e_x=%.3f 방향 spd=%.3f",
-                    last_e_x_, spd);
+                    "[ArucoAligner] 마커 없음(X중) → last_e_x=%.3f 방향 spd=%.3f", last_e_x_, spd);
                 PublishFixed(kForwardSteerAngles, kSameInwheelSign, spd);
             } else {
                 RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
                     "[ArucoAligner] 마커 없음 → 정지");
                 PublishStop();
             }
+            both_visible_count_ = 0;
             return;
         }
 
-        // ── 마커 있을 때 위치 기억 ──────────────────────────────
         last_e_x_   = e.e_x;
         last_e_yaw_ = e.e_yaw;
 
-        // ── 마커 재인식 처리 ────────────────────────────────────
-        if (yaw_lost_recovery_) {
-            yaw_lost_recovery_ = false;
-            last_yaw_spd_ = 0.0;
-        }
+        if (yaw_lost_recovery_) { yaw_lost_recovery_ = false; last_yaw_spd_ = 0.0; }
         if (marker_was_lost_ && phase_ == Phase::X) {
             RCLCPP_INFO(this->get_logger(), "[ArucoAligner] 마커 재인식 → YAW 재시작");
-            phase_ = Phase::YAW;
-            yaw_ok_count_ = 0;
-            yaw_settle_ok_count_ = 0;
-            yaw_locked_ = false;
-            marker_was_lost_ = false;
+            phase_ = Phase::YAW; yaw_ok_count_ = 0; yaw_settle_ok_count_ = 0;
+            yaw_locked_ = false; marker_was_lost_ = false;
         }
 
-        const bool yaw_enter  = IsYawEnterOk(e);
-        const bool yaw_ok     = IsYawOk(e);
-        const bool center_ok  = std::fabs(e.e_x)     < p_.thr_center;
-        const bool dist_ok    = std::fabs(e.e_z_avg) < p_.thr_dist;
-        const bool diff_ok    = !e.both_visible || (std::fabs(e.e_z_diff) < p_.thr_diff);
+        const bool yaw_enter = IsYawEnterOk(e);
+        const bool yaw_ok    = IsYawOk(e);
+        const bool center_ok = std::fabs(e.e_x)     < p_.thr_center;
+        const bool dist_ok   = std::fabs(e.e_z_avg) < p_.thr_dist;
+        const bool diff_ok   = !e.both_visible || (std::fabs(e.e_z_diff) < p_.thr_diff);
 
-        // ── SEARCH 페이즈 ───────────────────────────────────────
         if (phase_ == Phase::SEARCH) {
             if (e.both_visible) {
-                RCLCPP_INFO(this->get_logger(),
-                    "[ArucoAligner] SEARCH → 양쪽 감지! YAW부터 재시작");
-                phase_               = Phase::YAW;
-                yaw_ok_count_        = 0;
-                yaw_locked_          = false;
-                yaw_settle_ok_count_ = 0;
-                yaw_fine_ok_count_   = 0;
-                x_phase_enter_t_     = rclcpp::Time(0, 0, RCL_ROS_TIME);
-                yaw_settle_t_        = rclcpp::Time(0, 0, RCL_ROS_TIME);
+                RCLCPP_INFO(this->get_logger(), "[ArucoAligner] SEARCH → 양쪽 감지! YAW 재시작");
+                phase_ = Phase::YAW; yaw_ok_count_ = 0; yaw_locked_ = false;
+                yaw_settle_ok_count_ = 0; yaw_fine_ok_count_ = 0; both_visible_count_ = 0;
+                x_phase_enter_t_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
+                yaw_settle_t_    = rclcpp::Time(0, 0, RCL_ROS_TIME);
             } else {
                 double spd = e.left_visible ? p_.min_vy : -p_.min_vy;
                 PublishFixed(kCrabSteerAngles, kSameInwheelSign, spd);
@@ -573,7 +577,6 @@ private:
             }
         }
 
-        // ── 페이즈 전환 ─────────────────────────────────────────
         if (phase_ == Phase::YAW) {
             yaw_ok_count_ = yaw_enter ? yaw_ok_count_ + 1 : 0;
             if (yaw_ok_count_ >= p_.yaw_ok_required_count) {
@@ -603,11 +606,9 @@ private:
             }
         } else if (phase_ == Phase::X && center_ok) {
             phase_ = Phase::Z;
-            RCLCPP_INFO(this->get_logger(), "[ArucoAligner] X → Z (center_ok, yaw=%.4f)",
-                e.e_yaw);
+            RCLCPP_INFO(this->get_logger(), "[ArucoAligner] X → Z (center_ok, yaw=%.4f)", e.e_yaw);
         } else if (phase_ == Phase::Z && dist_ok && diff_ok && e.both_visible) {
-            phase_ = Phase::YAW_FINE;
-            yaw_fine_ok_count_ = 0;
+            phase_ = Phase::YAW_FINE; yaw_fine_ok_count_ = 0;
             PublishStop();
             RCLCPP_INFO(this->get_logger(),
                 "[ArucoAligner] Z → YAW_FINE (dist=%.4f diff=%.4f yaw=%.4f)",
@@ -616,37 +617,34 @@ private:
         } else if (phase_ == Phase::YAW_FINE) {
             yaw_fine_ok_count_ = yaw_ok ? yaw_fine_ok_count_ + 1 : 0;
             if (yaw_fine_ok_count_ >= p_.yaw_ok_required_count) {
-                OnAlignDone(e);
-                return;
+                OnAlignDone(e); return;
             }
         }
 
-        // ── 1개 보이다가 2개 보이면 SEARCH → YAW 재시작 ───────
-        if (!e.both_visible) {
+        // both_visible 카운터 안정화
+        if (e.both_visible) {
+            both_visible_count_++;
+        } else {
+            both_visible_count_ = 0;
             was_both_visible_ = false;
         }
-        if (e.both_visible && !was_both_visible_ &&
+
+        if (both_visible_count_ >= p_.both_visible_required && !was_both_visible_ &&
             (phase_ == Phase::YAW || phase_ == Phase::YAW_SETTLE ||
              phase_ == Phase::X   || phase_ == Phase::Z)) {
             RCLCPP_INFO(this->get_logger(),
-                "[ArucoAligner] 마커 2개 감지! → SEARCH → YAW 재시작");
-            was_both_visible_ = true;
-            phase_ = Phase::SEARCH;
-            PublishStop();
-            return;
+                "[ArucoAligner] 마커 2개 안정 감지(%d프레임)! → SEARCH → YAW 재시작",
+                both_visible_count_);
+            was_both_visible_ = true; both_visible_count_ = 0;
+            phase_ = Phase::SEARCH; PublishStop(); return;
         }
-        if (e.both_visible) was_both_visible_ = true;
+        if (both_visible_count_ >= p_.both_visible_required) was_both_visible_ = true;
 
-        // ── Z 페이즈: 1개만 보이면 SEARCH ──────────────────────
         if (phase_ == Phase::Z && dist_ok && !e.both_visible) {
-            RCLCPP_INFO(this->get_logger(),
-                "[ArucoAligner] Z dist OK but 1개만 보임 → SEARCH");
-            phase_ = Phase::SEARCH;
-            PublishStop();
-            return;
+            RCLCPP_INFO(this->get_logger(), "[ArucoAligner] Z dist OK but 1개만 보임 → SEARCH");
+            phase_ = Phase::SEARCH; PublishStop(); return;
         }
 
-        // ── 로그 ────────────────────────────────────────────────
         const char * ps = (phase_==Phase::YAW)       ? "YAW"
                         : (phase_==Phase::YAW_SETTLE) ? "YSET"
                         : (phase_==Phase::X)          ? "X"
@@ -655,18 +653,17 @@ private:
                         : "SRCH";
         RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 250,
             "[ALIGN|%s|%s] eYL=%+.4f eYR=%+.4f eYavg=%+.4f(%s) eX=%+.4f(%s) "
-            "eZavg=%+.4f(%s) eZdiff=%+.4f(%s)",
+            "eZavg=%+.4f(%s) eZdiff=%+.4f(%s) bv=%d",
             ps, e.both_visible ? "BOTH" : "ONE",
             e.e_yaw_l, e.e_yaw_r, e.e_yaw, yaw_ok?"OK":"--",
             e.e_x,     center_ok?"OK":"--",
             e.e_z_avg, dist_ok?"OK":"--",
-            e.e_z_diff, diff_ok?"OK":"--");
+            e.e_z_diff, diff_ok?"OK":"--",
+            both_visible_count_);
 
-        // ── 페이즈별 제어 ───────────────────────────────────────
         switch (phase_) {
         case Phase::YAW:
         case Phase::YAW_FINE: {
-            // ★ [수정6] CalcYawSpeed 사용 → 브레이크 밴드 안에서도 min_w 보장
             double spd = CalcYawSpeed(e.e_yaw);
             last_yaw_spd_ = spd;
             PublishFixed(kSpinSteerAngles, kSpinInwheelSign, spd);
@@ -744,13 +741,11 @@ private:
         }
         state_ = State::WAITING; phase_ = Phase::YAW;
         yaw_ok_count_ = yaw_settle_ok_count_ = yaw_fine_ok_count_ = 0;
-        yaw_locked_ = false;
-        last_yaw_spd_ = 0.0;
-        yaw_lost_recovery_ = false;
-        marker_was_lost_   = false;
+        both_visible_count_ = 0;
+        yaw_locked_ = false; last_yaw_spd_ = 0.0;
+        yaw_lost_recovery_ = false; marker_was_lost_ = false;
         was_both_visible_  = false;
-        last_e_x_          = 0.0;
-        last_e_yaw_        = 0.0;
+        last_e_x_ = 0.0; last_e_yaw_ = 0.0;
         l1_ = r1_ = MF{};
         l1_t_ = r1_t_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
         x_phase_enter_t_ = yaw_settle_t_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
@@ -758,7 +753,6 @@ private:
             sequence_index_ + 1, marker_sequences_.size());
     }
 
-    // ── 멤버 변수 ──────────────────────────────────────────────
     Params p_;
     std::vector<MarkerSet> marker_sequences_;
     size_t sequence_index_ = 0;
@@ -767,15 +761,16 @@ private:
     Phase phase_ = Phase::YAW;
     int yaw_ok_count_ = 0, yaw_settle_ok_count_ = 0;
     int yaw_fine_ok_count_ = 0;
+    int both_visible_count_ = 0;
     bool yaw_locked_ = false;
     int trial_count_ = 0;
 
-    double last_yaw_spd_       = 0.0;
-    bool   yaw_lost_recovery_  = false;
-    bool   marker_was_lost_    = false;
-    bool   was_both_visible_   = false;
-    double last_e_x_           = 0.0;
-    double last_e_yaw_         = 0.0;
+    double last_yaw_spd_      = 0.0;
+    bool   yaw_lost_recovery_ = false;
+    bool   marker_was_lost_   = false;
+    bool   was_both_visible_  = false;
+    double last_e_x_          = 0.0;
+    double last_e_yaw_        = 0.0;
 
     MF l1_, r1_;
     rclcpp::Time l1_t_{0,0,RCL_ROS_TIME}, r1_t_{0,0,RCL_ROS_TIME};
@@ -788,6 +783,7 @@ private:
     rclcpp::Subscription<ros2_aruco_interfaces::msg::ArucoMarkers>::SharedPtr left_sub_, right_sub_;
     rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr steer_front_sub_, steer_rear_sub_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_scan_done_;
+    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_aruco_start_;
     std::array<rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr,4> steer_pubs_;
     std::array<rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr,4> inwheel_pubs_;
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr done_pub_, pause_pub_, detected_pub_;
