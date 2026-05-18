@@ -375,16 +375,79 @@ def align_heading(navigator, bridge: MissionBridge, wp: PoseStamped):
 
 def run_direct_drive(navigator, bridge: MissionBridge, goal_pose: PoseStamped):
     """
-    랙 입구 정렬 도달 후 호출
+    랙 입구 정렬 도달 후 호출, 첫 마커 감지 후 cmd_vel로 직접 주행
     Nav2 controller 대신 cmd_vel.linear.x로 직선 주행
     마지막 마커 스캔 완료 시 Nav2 복귀
     """
     print('[Mission] ══════════════════════════════════════')
-    print('[Mission] ★ 랙 사이 직접 구동 모드 진입')
-    print(f'[Mission]   속도: {DIRECT_DRIVE_SPEED} m/s')
+    print('[Mission] ★ 랙 사이 주행 모드 진입')
+    print(f'[Mission]   Phase 1: Nav2로 첫 마커까지 주행')
+    print(f'[Mission]   Phase 2: cmd_vel 직진 (v={DIRECT_DRIVE_SPEED} m/s)')
     print(f'[Mission]   마지막 마커: {LAST_MARKER_IDX}')
     print('[Mission] ══════════════════════════════════════')
 
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    #  Phase 1: Nav2로 wp3 방향 주행하면서 첫 번째 마커 대기
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    print('[Mission] [Phase 1] Nav2로 첫 마커까지 주행 시작')
+    bridge.reset_flags()
+
+    goal_pose.header.stamp = navigator.get_clock().now().to_msg()
+    navigator.goToPose(goal_pose)
+    bridge.start_publishing(GENERAL_CHECKER_NAME, heading_only=False)
+
+    first_marker_found = False
+    while not navigator.isTaskComplete():
+        if bridge.aruco_detected.is_set():
+            print('[Mission] [Phase 1] ★ 첫 번째 마커 감지!')
+            bridge.stop_publishing()
+
+            # pause → cancel
+            bridge.publish_pause(True)
+            navigator.cancelTask()
+            while not navigator.isTaskComplete():
+                time.sleep(0.05)
+
+            first_marker_found = True
+            break
+
+        time.sleep(0.05)
+
+    bridge.stop_publishing()
+
+    if not first_marker_found:
+        # Nav2가 wp3까지 도달했는데 마커를 못 찾음 -> 그냥 완료 처리
+        result = navigator.getResult()
+        print(f'[Mission] [Phase 1] Nav2 완료 (마커 미감지): {result}')
+        return True
+
+    # ── 첫 번째 마커 정렬 + 스캔 ──
+    current_marker = bridge.marker_pair_idx
+    print(f'[Mission] [Phase 1] 첫 마커 처리 (marker_pair_idx={current_marker})')
+
+    align_heading(navigator, bridge, goal_pose)
+
+    print('[Mission] 정렬 완료 대기 중...')
+    bridge.wait_for_alignment()
+
+    bridge.correct_pose()
+    time.sleep(0.5)
+
+    print('[Mission] 스캔 완료 대기 중...')
+    bridge.wait_for_scan()
+
+    # 첫 마커가 마지막 마커였을 경우
+    if bridge.marker_pair_idx > LAST_MARKER_IDX:
+        print('[Mission] ★ 마지막 마커 스캔 완료 → Nav2 복귀 준비')
+        bridge.publish_pause(False)
+        bridge.reset_flags()
+        return True
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    #  Phase 2: cmd_vel 직진으로 나머지 마커 처리
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    print(f'[Mission] [Phase 2] cmd_vel 직진 모드 시작 (다음 idx={bridge.marker_pair_idx})')
+    bridge.reset_flags()
     # pause 해제 후 직접 구동 시작
     bridge.publish_pause(False)
     time.sleep(0.2)
@@ -394,7 +457,7 @@ def run_direct_drive(navigator, bridge: MissionBridge, goal_pose: PoseStamped):
         # 마커 감지 대기 (50ms 주기 폴링)
         if bridge.aruco_detected.is_set():
             current_marker = bridge.marker_pair_idx
-            print(f'[Mission] ★ 마커 감지! (marker_pair_idx={current_marker})')
+            print(f'[Mission] [Phase 2] ★ 마커 감지! (marker_pair_idx={current_marker})')
 
             # ── 1) 직진 정지 → pause ──
             bridge.stop_direct_drive()
@@ -417,7 +480,6 @@ def run_direct_drive(navigator, bridge: MissionBridge, goal_pose: PoseStamped):
             bridge.wait_for_scan()
 
             # ── 6) 마지막 마커 확인 ──
-            # correct_pose()에서 marker_pair_idx가 이미 +1 됨
             if bridge.marker_pair_idx > LAST_MARKER_IDX:
                 print('[Mission] ★ 마지막 마커 스캔 완료 → Nav2 복귀 준비')
                 bridge.publish_pause(False)
@@ -425,7 +487,7 @@ def run_direct_drive(navigator, bridge: MissionBridge, goal_pose: PoseStamped):
                 return True
 
             # ── 7) 아직 마커 남음 → 직진 재개 ──
-            print(f'[Mission] 다음 마커 대기 (다음 idx={bridge.marker_pair_idx})')
+            print(f'[Mission] [Phase 2] 다음 마커 대기 (다음 idx={bridge.marker_pair_idx})')
             bridge.reset_flags()
             bridge.publish_pause(False)
             time.sleep(0.2)
