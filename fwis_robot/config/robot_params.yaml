@@ -102,14 +102,14 @@ defaults:
 
       # ── 수렴 임계값 ──────────────────────────────────────────
       thr_yaw:         0.010
-      thr_center:      0.008
-      thr_dist:        0.008
+      thr_center:      0.005
+      thr_dist:        0.005
       thr_diff:        0.010
       required_stable: 3
 
       # ── 페이즈 전환 ──────────────────────────────────────────
-      thr_yaw_enter_x:       0.020
-      thr_yaw_back_to_yaw:   0.025
+      thr_yaw_enter_x:       0.015
+      thr_yaw_back_to_yaw:   0.020
       yaw_ok_required_count: 3
       x_phase_min_hold_time: 0.7
 
@@ -164,13 +164,13 @@ defaults:
 
       dxl_left_start:  330
       dxl_left_p0_end: 210
-      dxl_left_p1_end: -610
+      dxl_left_p1_end: -570
       dxl_left_p2_end: -870
       dxl_left_end:    -970
 
       dxl_right_start:  1470
       dxl_right_p0_end: 1350
-      dxl_right_p1_end:  530
+      dxl_right_p1_end:  570
       dxl_right_p2_end:  250
       dxl_right_end:     150
 
