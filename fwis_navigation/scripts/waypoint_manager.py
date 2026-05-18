@@ -16,7 +16,7 @@ import time
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
 from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
-from geometry_msgs.msg import PoseStamped, Quaternion, PoseWithCovarianceStamped
+from geometry_msgs.msg import PoseStamped, Quaternion, PoseWithCovarianceStamped, Twist
 from std_msgs.msg import Bool, String
 from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 
@@ -27,6 +27,11 @@ MARKER_MAP_POSES = {
     3: (2.36,  -2.75),
     4: (2.92,  -2.82),
 }
+
+RACK_DRIVE_WP_IDX = 2       # 직접 구동 시작하는 wp index
+LAST_MARKER_IDX = 4         # 마지막 마커 index. 해당 마커 스캔 후 nav2 복귀
+DIRECT_DRIVE_SPEED = 0.20   # 랙 사이 직진 속도
+DIRECT_DRIVE_HZ = 20        # cmd_vel publish 주기
 
 def yaw2quaternion(yaw: float) -> Quaternion:
     q = Quaternion()
@@ -136,6 +141,7 @@ class MissionBridge(Node):
             depth=1)
         self.gc_selector_pub  = self.create_publisher(String, '/goal_checker_selector', gc_qos)
         self.heading_only_pub = self.create_publisher(Bool, '/heading_only_mode', qos)
+        self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
 
         self.create_subscription(Bool, '/aruco_detected',         self._on_aruco,          qos)
         self.create_subscription(Bool, '/alignment_done',         self._on_alignment_done, qos)
@@ -159,6 +165,10 @@ class MissionBridge(Node):
         self._publish_active    = False
         self._publish_thread    = None
         self._heading_only_mode = False
+
+        # cmd_vel 직접 구동 상태
+        self._direct_drive_active = False
+        self._direct_drive_thread = None
 
     def _on_amcl_pose(self, msg):
         o = msg.pose.pose.orientation
@@ -259,6 +269,35 @@ class MissionBridge(Node):
             self._publish_thread.join(timeout=1.0)
             self._publish_thread = None
 
+    def _direct_drive_loop(self):
+        period = 1.0 / DIRECT_DRIVE_HZ
+        while self._direct_drive_active:
+            msg = Twist()
+            msg.linear.x = DIRECT_DRIVE_SPEED
+            msg.linear.y = 0.0
+            msg.angular.z = 0.0
+            self.cmd_vel_pub.publish(msg)
+            time.sleep(period)
+    
+    def start_direct_drive(self):
+        self.stop_direct_drive()
+        self._direct_drive_active = True
+        self._direct_drive_thread = threading.Thread(
+            target=self._direct_drive_loop, daemon=True)
+        self._direct_drive_thread.start()
+        self.get_logger().info(
+            f'[MissionBridge] ★ 직접 구동 시작 (v={DIRECT_DRIVE_SPEED} m/s)')
+
+    def stop_direct_drive(self):
+        self._direct_drive_active = False
+        if self._direct_drive_thread is not None:
+            self._direct_drive_thread.join(timeout=1.0)
+            self._direct_drive_thread = None
+        # 정지 명령 전송
+        stop_msg = Twist()
+        self.cmd_vel_pub.publish(stop_msg)
+        self.get_logger().info('[MissionBridge] cmd_vel 직접 구동 정지')
+
 
 # def align_heading(navigator, bridge: MissionBridge, wp: PoseStamped):
 #     """
@@ -334,7 +373,69 @@ def align_heading(navigator, bridge: MissionBridge, wp: PoseStamped):
     bridge.publish_aruco_start()
     time.sleep(0.2)
 
+def run_direct_drive(navigator, bridge: MissionBridge, goal_pose: PoseStamped):
+    """
+    랙 입구 정렬 도달 후 호출
+    Nav2 controller 대신 cmd_vel.linear.x로 직선 주행
+    마지막 마커 스캔 완료 시 Nav2 복귀
+    """
+    print('[Mission] ══════════════════════════════════════')
+    print('[Mission] ★ 랙 사이 직접 구동 모드 진입')
+    print(f'[Mission]   속도: {DIRECT_DRIVE_SPEED} m/s')
+    print(f'[Mission]   마지막 마커: {LAST_MARKER_IDX}')
+    print('[Mission] ══════════════════════════════════════')
 
+    # pause 해제 후 직접 구동 시작
+    bridge.publish_pause(False)
+    time.sleep(0.2)
+    bridge.start_direct_drive()
+
+    while True:
+        # 마커 감지 대기 (50ms 주기 폴링)
+        if bridge.aruco_detected.is_set():
+            current_marker = bridge.marker_pair_idx
+            print(f'[Mission] ★ 마커 감지! (marker_pair_idx={current_marker})')
+
+            # ── 1) 직진 정지 → pause ──
+            bridge.stop_direct_drive()
+            time.sleep(0.1)
+            bridge.publish_pause(True)
+
+            # ── 2) heading 정렬 (Nav2 goToPose 사용) ──
+            align_heading(navigator, bridge, goal_pose)
+
+            # ── 3) 정렬 완료 대기 ──
+            print('[Mission] 정렬 완료 대기 중...')
+            bridge.wait_for_alignment()
+
+            # ── 4) 위치 보정 ──
+            bridge.correct_pose()
+            time.sleep(0.5)
+
+            # ── 5) 스캔 완료 대기 ──
+            print('[Mission] 스캔 완료 대기 중...')
+            bridge.wait_for_scan()
+
+            # ── 6) 마지막 마커 확인 ──
+            # correct_pose()에서 marker_pair_idx가 이미 +1 됨
+            if bridge.marker_pair_idx > LAST_MARKER_IDX:
+                print('[Mission] ★ 마지막 마커 스캔 완료 → Nav2 복귀 준비')
+                bridge.publish_pause(False)
+                bridge.reset_flags()
+                return True
+
+            # ── 7) 아직 마커 남음 → 직진 재개 ──
+            print(f'[Mission] 다음 마커 대기 (다음 idx={bridge.marker_pair_idx})')
+            bridge.reset_flags()
+            bridge.publish_pause(False)
+            time.sleep(0.2)
+            bridge.start_direct_drive()
+
+        time.sleep(0.05)
+
+# ══════════════════════════════════════════════════════════════
+#  main()
+# ══════════════════════════════════════════════════════════════
 def main():
     rclpy.init()
 
@@ -379,6 +480,36 @@ def main():
               f'({goal_x:.2f}, {goal_y:.2f}, yaw={yaw_deg:.1f}°) [{checker}]'
               f'{" (via " + str(len(via_list)) + " points)" if via_list else ""}')
 
+        # ───────────── 랙 진입 정렬 후 직접 구동 모드 ─────────────
+        if i == RACK_DRIVE_WP_IDX:
+            # 직접 구동
+            run_direct_drive(navigator, bridge, goal_pose)
+
+            # 직접 구동 완료 -> nav2로 랙 출구까지 남은 거리 주행
+            print(f'[Mission] Nav2로 WP{i+1} 까지 잔여 주행 재개')
+            goal_pose.header.stamp = navigator.get_clock().now().to_msg()
+            navigator.goToPose(goal_pose)
+            bridge.start_publishing(GENERAL_CHECKER_NAME, heading_only=False)
+
+            while not navigator.isTaskComplete():
+                time.sleep(0.05)
+
+            bridge.stop_publishing()
+            result = navigator.getResult()
+            print(f'  [WP {i+1}/{total}] Nav2 결과: {result}')
+
+            if result == TaskResult.SUCCEEDED:
+                print(f'  [WP {i+1}/{total}] 도달 성공 ✓')
+                i += 1
+            elif result == TaskResult.CANCELED:
+                print(f'  [WP {i+1}/{total}] 취소됨.')
+                i += 1
+            elif result == TaskResult.FAILED:
+                print(f'  [WP {i+1}/{total}] 실패! → 재시도...')
+                time.sleep(1.0)
+            continue
+        
+        # ───────────── 일반 주행 (wp1, wp2, wp4, wp5) ─────────────
         # 2) 플래그 초기화
         bridge.reset_flags()
 
@@ -441,7 +572,6 @@ def main():
 
         if bridge.aruco_detected.is_set():
             print('[Mission] ★ (task 완료 후) 마커 감지!')
-
             bridge.publish_pause(True)
             align_heading(navigator, bridge, goal_pose)
 
