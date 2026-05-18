@@ -66,17 +66,16 @@ def build_waypoints(navigator) -> list:
     coords = [
         # wp1: 랙 입구
         {
-            'goal': (-0.3, -2.50, half_turn),
+            'goal': (-0.2, -2.50, half_turn),
             'via': [
-                (2.52, 0.0, 0.0),             # 시작 지점 복도
-                (3.81, -3.22, -half_turn),    # 창가 쪽 복도
+                (2.8, 0.0, 0.0),             # 시작 지점 복도
                 (3.0, -5.0, -a_round),       # 복도
                 (1.0, -5.0, -a_round),       # 마지막 복도
             ],
         },
         # wp2: 랙 입구 정렬
         {
-            'goal': (-0.3, -2.50, 0.0),
+            'goal': (-0.2, -2.50, 0.0),
             'via': [],
         },
         # wp3: 랙 출구
@@ -88,7 +87,7 @@ def build_waypoints(navigator) -> list:
         {
             'goal': (0.23, -0.05, -a_round),
             'via': [
-                (2.5, 0.0, -a_round),
+                (2.8, 0.0, -a_round),
             ],
         },
         # wp5: 초기 위치 정렬
@@ -261,69 +260,77 @@ class MissionBridge(Node):
             self._publish_thread = None
 
 
+# def align_heading(navigator, bridge: MissionBridge, wp: PoseStamped):
+#     """
+#     현재 위치에서 yaw=0°로 heading 맞추기
+#     완료 후 pause → /aruco_start publish → aruco_aligner가 정렬 시작
+
+#     수정사항:
+#       - cancel 직후 amcl 안정화 대기 (0.5s)
+#       - target_yaw: waypoint의 yaw 사용
+#       - yaw 차이 0.5도 미만이면 heading 스킵
+#       - heading_only_mode 먼저 publish → 0.5s 대기 → pause 해제 (BT 수신 확보)
+#       - heading 완료 후 pause → aruco_start 순서
+#     """
+#     # cancel 직후 amcl 업데이트 대기
+#     time.sleep(0.5)
+
+#     with bridge.amcl_lock:
+#         cur_x   = bridge.amcl_x
+#         cur_y   = bridge.amcl_y
+#         cur_yaw = bridge.amcl_yaw
+
+#     if cur_x is None or cur_y is None:
+#         print('[Mission] amcl_pose 없음 → heading 스킵, aruco_start 바로 publish')
+#         bridge.publish_aruco_start()
+#         return
+
+#     target_yaw = quaternion2yaw(wp.pose.orientation)
+#     yaw_diff = abs(normalize_angle(target_yaw - (cur_yaw or 0.0)))
+
+#     print(f'[Mission] heading: 현재={math.degrees(cur_yaw or 0.0):.1f}° '
+#           f'목표={math.degrees(target_yaw):.1f}° 차이={math.degrees(yaw_diff):.1f}°')
+
+#     # yaw 차이 0.5도 미만이면 스킵
+#     if yaw_diff < math.radians(0.5):
+#         print('[Mission] heading 차이 작음 → 스킵, aruco_start publish')
+#         bridge.publish_aruco_start()
+#         time.sleep(0.2)
+#         return
+
+#     heading_wp = make_pose(navigator, cur_x, cur_y, target_yaw)
+
+#     # ★ heading_only_mode 먼저 publish → BT가 수신한 뒤 pause 해제
+#     bridge.start_publishing(PRECISE_CHECKER_NAME, heading_only=True)
+#     time.sleep(0.5)  # BT가 heading_only_mode 수신할 시간 확보
+
+#     # pause 해제 → nav2/mobile_robot_node 활성화
+#     bridge.publish_pause(False)
+#     time.sleep(0.2)
+
+#     navigator.goToPose(heading_wp)
+
+#     while not navigator.isTaskComplete():
+#         time.sleep(0.1)
+
+#     bridge.stop_publishing()
+#     bridge.publish_heading_only(False)
+
+#     result = navigator.getResult()
+#     print(f'[Mission] heading 완료: {result}')
+
+#     # heading 완료 → pause → aruco_start
+#     bridge.publish_pause(True)
+#     time.sleep(0.3)
+
+#     bridge.publish_aruco_start()
+#     time.sleep(0.2)
+
 def align_heading(navigator, bridge: MissionBridge, wp: PoseStamped):
     """
-    현재 위치에서 yaw=0°로 heading 맞추기
-    완료 후 pause → /aruco_start publish → aruco_aligner가 정렬 시작
-
-    수정사항:
-      - cancel 직후 amcl 안정화 대기 (0.5s)
-      - target_yaw 항상 0° 고정 (랙 정면)
-      - yaw 차이 0.5도 미만이면 heading 스킵
-      - heading_only_mode 먼저 publish → 0.5s 대기 → pause 해제 (BT 수신 확보)
-      - heading 완료 후 pause → aruco_start 순서
+    0.5초 대기 후 aruco_start publish
     """
-    # cancel 직후 amcl 업데이트 대기
-    time.sleep(0.5)
-
-    with bridge.amcl_lock:
-        cur_x   = bridge.amcl_x
-        cur_y   = bridge.amcl_y
-        cur_yaw = bridge.amcl_yaw
-
-    if cur_x is None or cur_y is None:
-        print('[Mission] amcl_pose 없음 → heading 스킵, aruco_start 바로 publish')
-        bridge.publish_aruco_start()
-        return
-
-    target_yaw = 0.0  # ★ 항상 yaw=0° (랙 정면)
-    yaw_diff = abs(normalize_angle(target_yaw - (cur_yaw or 0.0)))
-
-    print(f'[Mission] heading: 현재={math.degrees(cur_yaw or 0.0):.1f}° '
-          f'목표={math.degrees(target_yaw):.1f}° 차이={math.degrees(yaw_diff):.1f}°')
-
-    # yaw 차이 0.5도 미만이면 스킵
-    if yaw_diff < math.radians(0.5):
-        print('[Mission] heading 차이 작음 → 스킵, aruco_start publish')
-        bridge.publish_aruco_start()
-        time.sleep(0.2)
-        return
-
-    heading_wp = make_pose(navigator, cur_x, cur_y, target_yaw)
-
-    # ★ heading_only_mode 먼저 publish → BT가 수신한 뒤 pause 해제
-    bridge.start_publishing(PRECISE_CHECKER_NAME, heading_only=True)
-    time.sleep(0.5)  # BT가 heading_only_mode 수신할 시간 확보
-
-    # pause 해제 → nav2/mobile_robot_node 활성화
-    bridge.publish_pause(False)
-    time.sleep(0.2)
-
-    navigator.goToPose(heading_wp)
-
-    while not navigator.isTaskComplete():
-        time.sleep(0.1)
-
-    bridge.stop_publishing()
-    bridge.publish_heading_only(False)
-
-    result = navigator.getResult()
-    print(f'[Mission] heading 완료: {result}')
-
-    # heading 완료 → pause → aruco_start
-    bridge.publish_pause(True)
-    time.sleep(0.3)
-
+    time.sleep(0.5)  # cancel 직후 안정화 대기
     bridge.publish_aruco_start()
     time.sleep(0.2)
 
@@ -486,4 +493,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main() 
+    main()
