@@ -143,7 +143,7 @@ controller_server:
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
       xy_goal_tolerance: 0.25
-      yaw_goal_tolerance: 0.1
+      yaw_goal_tolerance: 0.09
     # Controller parameters
     FollowPath:
       plugin: "mpc_ufrws_controller::MpcUFRWSController"
@@ -164,11 +164,11 @@ controller_server:
       turn_decel_threshold: 15.0    # [제자리 회전 모드] 회전 감속 시작 각도 [deg]
       # ── cost function 가중치 ───────────────────
       ## 상태 오차 가중치
-      Q_y: 150.0                  # 횡방향 오차 가중치. 값이 클수록 경로 중앙 유지하려고 함
-      Q_phi: 10.0                 # 선수각 오차 가중치. 값이 클수록 차체 방향 유지하려고 함 (crab walking)
+      Q_y: 170.0                  # 횡방향 오차 가중치. 값이 클수록 경로 중앙 유지하려고 함
+      Q_phi: 8.0                 # 선수각 오차 가중치. 값이 클수록 차체 방향 유지하려고 함 (crab walking)
       ## 제어 입력 가중치
       R_u: 0.1                    # 조향각 크기 페널티. 값이 클수록 조향각 변화 작음
-      R_delta: 2.0                # 조향각 변화량 페널티. 값이 클수록 조향 속도 변화 작음
+      R_delta: 4.0                # 조향각 변화량 페널티. 값이 클수록 조향 속도 변화 작음
       # ── NLopt 최적화 가중치 ─────────────────────
       opt_max_eval: 100           # 실시간 보장을 위한 함수 평가 횟수 상한
       opt_ftol_rel: 1.0e-6        # 비용 함수 상대 수렴 허용치
@@ -176,9 +176,9 @@ controller_server:
       opt_grad_eps: 1.0e-5        # 유한 차분 스텝 크기
       # ── 장애물 회피 파라미터 ────────────────────────────
       Q_obs_critical: 700.0           # 충돌 임박 영역 가중치
-      Q_obs_repulsion: 10.0            # inflation 영역 반발 가중치
+      Q_obs_repulsion: 20.0            # inflation 영역 반발 가중치
       use_footprint_collision: true   # footprint 기반 충돌 검사 사용 유무
-      slowdown_ratio: 0.9             # 감속 비율
+      slowdown_ratio: 0.8             # 감속 비율
       lethal_check_steps: 3           # MPC 출력 후 LETHAL 검증 스텝 수
       # ── TF ───────────────────────────────────
       transform_tolerance: 0.1

@@ -172,7 +172,7 @@ def _launch_setup(context, *args, **kwargs):
         executable='teleop_node',
         name='teleop_twist_joy_node',
         parameters=[joy_params_yaml],
-        remappings=[('cmd_vel', 'cmd_vel_teleop')]
+        # remappings=[('cmd_vel', 'cmd_vel_teleop')]
     )
 
     # ── RViz ─────────────────────────────────────────────────────────────────

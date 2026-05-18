@@ -66,16 +66,17 @@ def build_waypoints(navigator) -> list:
     coords = [
         # wp1: 랙 입구
         {
-            'goal': (-0.2, -2.50, half_turn),
+            'goal': (-0.3, -2.50, half_turn),
             'via': [
-                (2.8, 0.0, 0.0),             # 시작 지점 복도
-                (3.0, -5.0, -a_round),     # 복도
-                (1.0, -5.0, -a_round),     # 마지막 복도
+                (2.52, 0.0, 0.0),             # 시작 지점 복도
+                (3.81, -3.22, -half_turn),    # 창가 쪽 복도
+                (3.0, -5.0, -a_round),       # 복도
+                (1.0, -5.0, -a_round),       # 마지막 복도
             ],
         },
         # wp2: 랙 입구 정렬
         {
-            'goal': (-0.2, -2.50, 0.0),
+            'goal': (-0.3, -2.50, 0.0),
             'via': [],
         },
         # wp3: 랙 출구
@@ -87,7 +88,7 @@ def build_waypoints(navigator) -> list:
         {
             'goal': (0.23, -0.05, -a_round),
             'via': [
-                (2.8, 0.0, -a_round),
+                (2.5, 0.0, -a_round),
             ],
         },
         # wp5: 초기 위치 정렬
@@ -95,16 +96,6 @@ def build_waypoints(navigator) -> list:
             'goal': (0.23, -0.05, 0.0),
             'via': [],
         },
-
-        # ( 2.8,  0.0,  0.0),
-        # ( 3.76, -4.99, -half_turn),
-        # (-0.2,  -2.50,  half_turn),
-        # (-0.2,  -2.50,  0.0),
-        # ( 3.54, -2.75,  0.0),
-        # ( 0.23, -0.05, -a_round),
-        # ( 0.23, -0.05, 0.0),
-        #### 자세정렬 테스트용
-        # (3.54, -2.5, 0.0),
     ]
     return coords
 
@@ -117,7 +108,7 @@ PRECISE_CHECKER_NAME   = "precise_goal_checker"
 def determine_goal_checker(prev_goal: tuple, curr_goal: tuple) -> str:
     px, py, pyaw = prev_goal
     cx, cy, cyaw = curr_goal
-    
+
     dx = cx - px
     dy = cy - py
     xy_dist = math.sqrt(dx * dx + dy * dy)
@@ -138,7 +129,7 @@ class MissionBridge(Node):
 
         self.pause_pub        = self.create_publisher(Bool, '/mobile_robot_pause', qos)
         self.initialpose_pub  = self.create_publisher(PoseWithCovarianceStamped, '/initialpose', 10)
-        self.aruco_start_pub  = self.create_publisher(Bool, '/aruco_start', qos)  # ★ 추가
+        self.aruco_start_pub  = self.create_publisher(Bool, '/aruco_start', qos)
 
         gc_qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
@@ -163,7 +154,7 @@ class MissionBridge(Node):
 
         self.marker_pair_idx  = 0
         self._last_aruco_time = 0.0
-        self._aruco_cooldown  = 5.0
+        self._aruco_cooldown  = 2.0  # ★ 수정: 5.0 → 2.0 (마커 재감지 응답속도 향상)
 
         self._current_checker   = GENERAL_CHECKER_NAME
         self._publish_active    = False
@@ -229,7 +220,6 @@ class MissionBridge(Node):
         self.get_logger().info(f'[MissionBridge] /mobile_robot_pause = {value}')
 
     def publish_aruco_start(self):
-        """heading 완료 후 aruco_aligner에 정렬 시작 신호"""
         msg = Bool(); msg.data = True
         self.aruco_start_pub.publish(msg)
         self.get_logger().info('[MissionBridge] /aruco_start publish')
@@ -273,28 +263,52 @@ class MissionBridge(Node):
 
 def align_heading(navigator, bridge: MissionBridge, wp: PoseStamped):
     """
-    현재 위치에서 waypoint yaw로 heading 맞추기
-    완료 후 /aruco_start publish → aruco_aligner가 정렬 시작
+    현재 위치에서 yaw=0°로 heading 맞추기
+    완료 후 pause → /aruco_start publish → aruco_aligner가 정렬 시작
+
+    수정사항:
+      - cancel 직후 amcl 안정화 대기 (0.5s)
+      - target_yaw 항상 0° 고정 (랙 정면)
+      - yaw 차이 0.5도 미만이면 heading 스킵
+      - heading_only_mode 먼저 publish → 0.5s 대기 → pause 해제 (BT 수신 확보)
+      - heading 완료 후 pause → aruco_start 순서
     """
+    # cancel 직후 amcl 업데이트 대기
+    time.sleep(0.5)
+
     with bridge.amcl_lock:
-        cur_x = bridge.amcl_x
-        cur_y = bridge.amcl_y
+        cur_x   = bridge.amcl_x
+        cur_y   = bridge.amcl_y
+        cur_yaw = bridge.amcl_yaw
 
     if cur_x is None or cur_y is None:
         print('[Mission] amcl_pose 없음 → heading 스킵, aruco_start 바로 publish')
         bridge.publish_aruco_start()
         return
 
-    target_yaw = quaternion2yaw(wp.pose.orientation)
-    print(f'[Mission] heading 맞추기: yaw={math.degrees(target_yaw):.1f}°')
+    target_yaw = 0.0  # ★ 항상 yaw=0° (랙 정면)
+    yaw_diff = abs(normalize_angle(target_yaw - (cur_yaw or 0.0)))
+
+    print(f'[Mission] heading: 현재={math.degrees(cur_yaw or 0.0):.1f}° '
+          f'목표={math.degrees(target_yaw):.1f}° 차이={math.degrees(yaw_diff):.1f}°')
+
+    # yaw 차이 0.5도 미만이면 스킵
+    if yaw_diff < math.radians(0.5):
+        print('[Mission] heading 차이 작음 → 스킵, aruco_start publish')
+        bridge.publish_aruco_start()
+        time.sleep(0.2)
+        return
 
     heading_wp = make_pose(navigator, cur_x, cur_y, target_yaw)
+
+    # ★ heading_only_mode 먼저 publish → BT가 수신한 뒤 pause 해제
+    bridge.start_publishing(PRECISE_CHECKER_NAME, heading_only=True)
+    time.sleep(0.5)  # BT가 heading_only_mode 수신할 시간 확보
 
     # pause 해제 → nav2/mobile_robot_node 활성화
     bridge.publish_pause(False)
     time.sleep(0.2)
 
-    bridge.start_publishing(PRECISE_CHECKER_NAME, heading_only=True)
     navigator.goToPose(heading_wp)
 
     while not navigator.isTaskComplete():
@@ -306,9 +320,12 @@ def align_heading(navigator, bridge: MissionBridge, wp: PoseStamped):
     result = navigator.getResult()
     print(f'[Mission] heading 완료: {result}')
 
-    # ★ aruco_aligner에 정렬 시작 신호 (aruco_aligner가 내부에서 pause 걸고 시작)
+    # heading 완료 → pause → aruco_start
+    bridge.publish_pause(True)
+    time.sleep(0.3)
+
     bridge.publish_aruco_start()
-    time.sleep(0.1)
+    time.sleep(0.2)
 
 
 def main():
@@ -362,7 +379,6 @@ def main():
         goal_pose.header.stamp = navigator.get_clock().now().to_msg()
 
         if via_list:
-            # goThroughPoses
             through_poses = []
             for vx, vy, vyaw in via_list:
                 through_poses.append(make_pose(navigator, vx, vy, vyaw))
@@ -370,9 +386,8 @@ def main():
             navigator.goThroughPoses(through_poses)
             print(f'  → goThroughPoses ({len(through_poses)} poses)')
         else:
-            # goToPose
             navigator.goToPose(goal_pose)
-        
+
         # 4) GoalChecker 반복 publish
         bridge.start_publishing(checker, is_heading_only)
 
@@ -384,24 +399,23 @@ def main():
                 print('[Mission] ★ 마커 감지!')
                 bridge.stop_publishing()
 
-                # 1. pause → cancel
+                # pause → cancel
                 bridge.publish_pause(True)
                 navigator.cancelTask()
                 while not navigator.isTaskComplete():
                     time.sleep(0.05)
 
-                # 2. heading 맞추기 → 완료 후 /aruco_start publish
-                #    (aruco_aligner가 /aruco_start 받으면 pause 걸고 정렬 시작)
+                # heading 맞추기 (yaw=0° 고정) → pause → aruco_start publish
                 align_heading(navigator, bridge, goal_pose)
 
-                # 3. 정렬 완료 대기
+                # 정렬 완료 대기
                 print('[Mission] 정렬 완료 대기 중...')
                 bridge.wait_for_alignment()
 
                 bridge.correct_pose()
                 time.sleep(0.5)
 
-                # 4. 스캔 완료 대기
+                # 스캔 완료 대기
                 print('[Mission] 스캔 완료 대기 중...')
                 bridge.wait_for_scan()
 
@@ -410,7 +424,7 @@ def main():
                 wp_interrupted = True
                 break
 
-            time.sleep(0.3)
+            time.sleep(0.05)  # ★ 수정: 0.3 → 0.05 (마커 감지 즉시 반응)
 
         bridge.stop_publishing()
 
@@ -472,4 +486,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    main() 
