@@ -71,7 +71,7 @@ def build_waypoints(navigator) -> list:
     coords = [
         # wp1: 랙 입구
         {
-            'goal': (-0.2, -2.50, half_turn),
+            'goal': (-0.2, -2.55, half_turn),
             'via': [
                 (2.8, 0.0, 0.0),             # 시작 지점 복도
                 (3.0, -5.0, -a_round),       # 복도
@@ -80,7 +80,7 @@ def build_waypoints(navigator) -> list:
         },
         # wp2: 랙 입구 정렬
         {
-            'goal': (-0.2, -2.50, 0.0),
+            'goal': (-0.2, -2.55, 0.0),
             'via': [],
         },
         # wp3: 랙 출구

@@ -148,14 +148,14 @@ controller_server:
     FollowPath:
       plugin: "mpc_ufrws_controller::MpcUFRWSController"
       # ── MPC 파라미터 ───────────────────────────
-      desired_linear_vel: 0.25
+      desired_linear_vel: 0.30
       desired_angular_vel: 0.40
       lookahead_dist: 0.3
       control_period: 0.02         # 50 [Hz]
       prediction_horizon: 10       # 예측 구간
       max_steer_angle: 180.0       # [deg]
       goal_decel_radius: 1.0       # goal 감속 시작 거리 [m]
-      goal_min_approach_vel: 0.15  # goal 최소 접근 속도 [m/s]
+      goal_min_approach_vel: 0.18  # goal 최소 접근 속도 [m/s]
       # ── 주행 모드  ─────────────────────────────
       reversing_mode: false         # 후진 모드
       point_turning_mode: true      # 제자리 회전 모드
@@ -164,11 +164,11 @@ controller_server:
       turn_decel_threshold: 15.0    # [제자리 회전 모드] 회전 감속 시작 각도 [deg]
       # ── cost function 가중치 ───────────────────
       ## 상태 오차 가중치
-      Q_y: 170.0                  # 횡방향 오차 가중치. 값이 클수록 경로 중앙 유지하려고 함
-      Q_phi: 8.0                 # 선수각 오차 가중치. 값이 클수록 차체 방향 유지하려고 함 (crab walking)
+      Q_y: 160.0                 # 횡방향 오차 가중치. 값이 클수록 경로 중앙 유지하려고 함
+      Q_phi: 5.0                 # 선수각 오차 가중치. 값이 클수록 차체 방향 유지하려고 함 (crab walking)
       ## 제어 입력 가중치
       R_u: 0.1                    # 조향각 크기 페널티. 값이 클수록 조향각 변화 작음
-      R_delta: 4.0                # 조향각 변화량 페널티. 값이 클수록 조향 속도 변화 작음
+      R_delta: 2.5                # 조향각 변화량 페널티. 값이 클수록 조향 속도 변화 작음
       # ── NLopt 최적화 가중치 ─────────────────────
       opt_max_eval: 100           # 실시간 보장을 위한 함수 평가 횟수 상한
       opt_ftol_rel: 1.0e-6        # 비용 함수 상대 수렴 허용치

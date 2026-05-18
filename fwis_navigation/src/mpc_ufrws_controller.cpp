@@ -523,7 +523,7 @@ geometry_msgs::msg::TwistStamped MpcUFRWSController::computeVelocityCommands(
   if (cost_now >= 0.90) {
     // INSCRIBED 근처 감속
     current_v_ref_ *= slowdown_ratio_;
-    RCLCPP_INFO(logger_,
+    RCLCPP_INFO_THROTTLE(logger_, *clock_, 3000,
       "Near INSCRIBED (cost=%.2f). Slowing to %.2f m/s", cost_now, current_v_ref_);
   }
 
