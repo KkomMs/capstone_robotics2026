@@ -73,9 +73,10 @@ def build_waypoints(navigator) -> list:
         {
             'goal': (-0.2, -2.55, half_turn),
             'via': [
-                (2.8, 0.0, 0.0),             # 시작 지점 복도
-                (3.0, -5.0, -a_round),       # 복도
-                (1.0, -5.0, -a_round),       # 마지막 복도
+                (2.6, -0.25, 0.0),             # 시작 지점 복도
+                (3.76, -2.72, -half_turn),     # 창가 복도
+                (3.0, -4.9, -a_round),       # 마지막 복도 1
+                (1.0, -5.0, -a_round),       # 마지막 복도 2
             ],
         },
         # wp2: 랙 입구 정렬
@@ -92,7 +93,7 @@ def build_waypoints(navigator) -> list:
         {
             'goal': (0.23, -0.05, -a_round),
             'via': [
-                (2.8, 0.0, -a_round),
+                (2.72, -0.25, -a_round),
             ],
         },
         # wp5: 초기 위치 정렬

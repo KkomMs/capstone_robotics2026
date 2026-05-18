@@ -1,239 +1,156 @@
 # config/robot_params.yaml
 
-defaults:
-  ros__parameters:
-    # ───────── Frames ─────────
-    common_frames: &common_frames
-      base_frame_id: "base_footprint"
-      odom_frame_id: "odom"
-      front_left_steer_joint:  "drive1_axis_joint"
-      front_right_steer_joint: "drive2_axis_joint"
-      rear_left_steer_joint:   "drive3_axis_joint"
-      rear_right_steer_joint:  "drive4_axis_joint"
-      front_left_inwheel_joint:  "motor1_axis_joint"
-      front_right_inwheel_joint: "motor2_axis_joint"
-      rear_left_inwheel_joint:   "motor3_axis_joint"
-      rear_right_inwheel_joint:  "motor4_axis_joint"
-
-    # ───────── Kinematics / Geometry ─────────
-      common_geom: &common_geom
-        wheel_radius: 0.0695
-        wheel_x_offset: 0.215
-        wheel_y_offset: 0.215
-        wheel_max_rpm: 560.0
-        steer_max_rpm: 65.0
-
-    # ───────── Controller ─────────
-      common_ctrl: &common_ctrl
-        use_rate_limit: false
-        bound_cmd_speed: 0.15
-        add_cmd_speed: 0.02
-        bound_cmd_ang_speed: 0.15
-        add_cmd_ang_speed: 0.05
-        max_linear_accel: 0.25
-        max_angular_accel: 0.5
-        deadzone_linear: 0.03
-        deadzone_angular: 0.03
-        lpf_linear: 0.0
-        lpf_angular: 0.0
-        limit_linear_abs: 0.7
-        limit_angular_abs: 1.5
-        deadband_threshold: 0.05
-
-    # ───────── Motor Profile ─────────
-    common_profile: &common_profile
-      control_rate: 50.0
-      publish_tf: false
-
-      steer_profile:
-        steer_max_velocity: 200.0
-        steer_max_accel: 600.0
-        steer_position_tolerance: 1.5
-
-      inwheel_profile:
-        inwheel_max_accel: 800.0
-        inwheel_max_decel: 1200.0
-        inwheel_min_rpm: 5.0
-
-      steer_inwheel_sync:
-        wait_for_steer: false
-        drive_scale_by_steer_err: true
-        steer_err_full_drive: 2.0
-        steer_err_zero_drive: 25.0
-
-    # ───────── IMU ─────────
-    common_imu: &common_imu
-      imu_port: "/dev/ttyIMU"
-      imu_baudrate: 115200
-      imu_frame_id: "imu_link"
-      sync_port: 1
-      sync_period_ms: 20
-      imu_publish_rate: 50.0
-
-    # ═══════════════════════════════════════════════════════════
-    # COMMON: ArUco 자세 정렬기 (C모드)
-    # ═══════════════════════════════════════════════════════════
-    common_aligner: &common_aligner
-
-      alignment_mode: "C"
-
-      # ── C 모드 기준값 ────────────────────────────────────────
-      ref_x:             0.000
-      ref_yaw_left:      0.000
-      ref_yaw_right:     0.000   
-      target_avg_dist:   0.600
-      target_z_diff:    -0.008
-      marker_id_left:  2
-      marker_id_right: 1
-
-      # ── PID 게인 ────────────────────────────────────────────
-      kp_w:    1.0
-      kp_x:    0.2
-      kp_y:    0.2
-      kp_diff: 0.2
-
-      # ── 속도 한계 ────────────────────────────────────────────
-      max_w:  0.19
-      min_w:  0.15
-      max_vx: 0.15
-      min_vx: 0.12
-      max_vy: 0.15
-      min_vy: 0.12
-
-      # ── 수렴 임계값 ──────────────────────────────────────────
-      thr_yaw:         0.010
-      thr_center:      0.005
-      thr_dist:        0.005
-      thr_diff:        0.010
-      required_stable: 3
-
-      # ── 페이즈 전환 ──────────────────────────────────────────
-      thr_yaw_enter_x:       0.015
-      thr_yaw_back_to_yaw:   0.020
-      yaw_ok_required_count: 3
-      x_phase_min_hold_time: 0.7
-
-      # ── YAW 브레이크 ─────────────────────────────────────────
-      yaw_brake_band:            0.05
-      yaw_brake_max_w:           0.15
-      yaw_settle_time:           0.50
-      yaw_settle_required_count: 2
-
-      # ── 마커 필터 ────────────────────────────────────────────
-      marker_timeout: 1.5
-      lpf_alpha:      0.3
-      outlier_thr:    0.5
-
-      # ── 부호 설정 ────────────────────────────────────────────
-      sign_yaw:  -1.0
-      sign_x:    +1.0
-      sign_dist: -1.0
-      sign_diff: +1.0
-
-      both_visible_required: 5
-
-      # ── 스티어 동기화 ────────────────────────────────────────
-      steer_position_tolerance: 1.5
-
-      # ── 내부 모터 제어용 기구학 ──────────────────────────────
-      wheel_radius:     0.0695
-      wheel_x_offset:   0.215
-      wheel_y_offset:   0.215
-      wheel_max_rpm:    560.0
-      deadzone_linear:  0.005
-      deadzone_angular: 0.005
-      steer_max_velocity:  200.0
-      steer_max_accel:     600.0
-      inwheel_max_accel:   800.0
-      inwheel_max_decel:  1200.0
-      inwheel_min_rpm:     5.0
-
-    # ═══════════════════════════════════════════════════════════
-    # COMMON: 다이나믹셀 스캔 모터
-    # ═══════════════════════════════════════════════════════════
-    common_dynamixel: &common_dynamixel
-
-      dxl_device:   "/dev/ttyDynamixel"
-      dxl_baudrate: 57600
-
-      dxl_left_id:  6
-      dxl_right_id: 7
-
-      dxl_left_scanner_id:  1
-      dxl_right_scanner_id: 2
-
-      dxl_left_start:  330
-      dxl_left_p0_end: 210
-      dxl_left_p1_end: -570
-      dxl_left_p2_end: -870
-      dxl_left_end:    -970
-
-      dxl_right_start:  1470
-      dxl_right_p0_end: 1350
-      dxl_right_p1_end:  570
-      dxl_right_p2_end:  250
-      dxl_right_end:     150
-
-      dxl_left_vel_p1:     4
-      dxl_left_vel_step:   1
-      dxl_left_vel_return: 10
-
-      dxl_right_vel_p1:     4
-      dxl_right_vel_step:   1
-      dxl_right_vel_return: 10
-
-      dxl_left_p0_step:  40
-      dxl_left_p2_step:  20
-      dxl_left_p3_step:   3
-      dxl_right_p0_step: 40
-      dxl_right_p2_step: 20
-      dxl_right_p3_step:  3
-
-      dxl_left_p2_is_sweep:  false
-      dxl_right_p2_is_sweep: false
-
-      dxl_arrive_threshold: 20
-      dxl_step_timeout_ms: 3000
-      dxl_control_period_ms: 100
-      alignment_done_delay_sec: 2.0
-
-      total_slots: 51
-      empty_slots: [0]
-
-# ─────────────────────────────────────────────────────────────────────────────
-# mobile_robot_node
-# ─────────────────────────────────────────────────────────────────────────────
 mobile_robot_node:
   ros__parameters:
-    <<: [*common_frames, *common_geom, *common_ctrl, *common_profile]
+    base_frame_id: "base_footprint"
+    odom_frame_id: "odom"
+    front_left_steer_joint:  "drive1_axis_joint"
+    front_right_steer_joint: "drive2_axis_joint"
+    rear_left_steer_joint:   "drive3_axis_joint"
+    rear_right_steer_joint:  "drive4_axis_joint"
+    front_left_inwheel_joint:  "motor1_axis_joint"
+    front_right_inwheel_joint: "motor2_axis_joint"
+    rear_left_inwheel_joint:   "motor3_axis_joint"
+    rear_right_inwheel_joint:  "motor4_axis_joint"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# imu_node
-# ─────────────────────────────────────────────────────────────────────────────
+    wheel_radius:   0.0695
+    wheel_x_offset: 0.215
+    wheel_y_offset: 0.215
+    wheel_max_rpm:  560.0
+
+    use_rate_limit:      false
+    bound_cmd_speed:     0.15
+    add_cmd_speed:       0.02
+    bound_cmd_ang_speed: 0.15
+    add_cmd_ang_speed:   0.05
+    max_linear_accel:    0.25
+    max_angular_accel:   0.5
+    deadzone_linear:     0.03
+    deadzone_angular:    0.03
+    lpf_linear:          0.0
+    lpf_angular:         0.0
+    limit_linear_abs:    0.7
+    limit_angular_abs:   1.5
+    deadband_threshold:  0.05
+
+    control_rate: 50.0
+    publish_tf:   false
+
+    steer_profile:
+      steer_max_velocity:       200.0
+      steer_max_accel:          600.0
+      steer_position_tolerance: 1.5
+
+    inwheel_profile:
+      inwheel_max_accel: 800.0
+      inwheel_max_decel: 1200.0
+      inwheel_min_rpm:   5.0
+
+    steer_inwheel_sync:
+      wait_for_steer:           false
+      drive_scale_by_steer_err: true
+      steer_err_full_drive:     2.0
+      steer_err_zero_drive:     25.0
+
+# ─────────────────────────────────────────────────────────────
 imu_node:
   ros__parameters:
-    <<: *common_imu
+    imu_port:         "/dev/ttyIMU"
+    imu_baudrate:     115200
+    imu_frame_id:     "imu_link"
+    sync_port:        1
+    sync_period_ms:   20
+    imu_publish_rate: 50.0
 
-# ─────────────────────────────────────────────────────────────────────────────
-# aruco_aligner_node
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
 aruco_aligner_node:
   ros__parameters:
-    <<: *common_aligner
-    marker_sequence_left:  [2, 4, 6, 8, 10]
-    marker_sequence_right: [1, 3, 5, 7, 9]
+    alignment_mode: "C"
 
-    # ── 랙별 ref값 (순서: 랙1, 랙2, 랙3, 랙4, 랙5) ──────────────
-    # 랙3~5는 측정값 없어서 임시로 랙1값 사용 → 측정 후 교체
-    rack_ref_x:           [ 0.000,  0.000,  0.000,  0.000,  0.000]
-    rack_ref_yaw_left:    [ 0.000,  0.000,  0.000,  0.000,  0.000]
-    rack_ref_yaw_right:   [ 0.000,  0.000,  0.000,  0.000,  0.000]  # ← 전부 수정
-    rack_target_avg_dist: [ 0.600,  0.600,  0.600,  0.600,  0.600]
+    ref_x:             0.000
+    ref_yaw_left:      0.000
+    ref_yaw_right:     0.000
+    target_avg_dist:   0.600
+    target_z_diff:    -0.008
+    marker_id_left:    2
+    marker_id_right:   1
+
+    kp_w:    1.0
+    kp_x:    0.2
+    kp_y:    0.2
+    kp_diff: 0.2
+
+    max_w:  0.19
+    min_w:  0.15
+    max_vx: 0.15
+    min_vx: 0.12
+    max_vy: 0.15
+    min_vy: 0.12
+
+    thr_yaw:         0.010
+    thr_center:      0.005
+    thr_dist:        0.005
+    thr_diff:        0.010
+    required_stable: 3
+
+    thr_yaw_enter_x:       0.015
+    thr_yaw_back_to_yaw:   0.020
+    yaw_ok_required_count: 3
+    x_phase_min_hold_time: 0.7
+
+    yaw_brake_band:            0.05
+    yaw_brake_max_w:           0.15
+    yaw_settle_time:           0.50
+    yaw_settle_required_count: 2
+
+    marker_timeout: 1.5
+    lpf_alpha:      0.3
+    outlier_thr:    0.5
+
+    sign_yaw:  -1.0
+    sign_x:     1.0
+    sign_dist: -1.0
+    sign_diff:  1.0
+
+    both_visible_required: 5
+
+    steer_position_tolerance: 1.5
+
+    # IK 기반 이동을 위한 kinematics 파라미터
+    wheel_radius:     0.0695
+    wheel_x_offset:   0.215
+    wheel_y_offset:   0.215
+    wheel_max_rpm:    560.0
+    deadzone_linear:  0.005
+    deadzone_angular: 0.005
+    steer_max_velocity:  200.0
+    steer_max_accel:     600.0
+    inwheel_max_accel:   800.0
+    inwheel_max_decel:   1200.0
+    inwheel_min_rpm:     5.0
+
+    # WHEEL_ALIGN
+    wheel_align_tol:    3.0
+    wheel_stable_count: 5
+
+    # crab 시간 기반 이동 (IK 사용)
+    # 이동 시간 = crab_move_dist / crab_vel
+    crab_move_dist: 0.43   # ← 실측 후 조정
+    crab_vel:       0.12   # ← 실측 후 조정
+    # 왼쪽 방향 부호: +1.0 또는 -1.0 (실측 후 맞춤)
+    crab_left_sign: 1.0
+
+    # 마커 시퀀스 (랙1~5)
+    marker_sequence_left:  [2, 4, 6, 8, 10]
+    marker_sequence_right: [1, 3, 5, 7,  9]
+
+    rack_ref_x:           [0.000, 0.000, 0.000, 0.000, 0.000]
+    rack_ref_yaw_left:    [0.000, 0.000, 0.000, 0.000, 0.000]
+    rack_ref_yaw_right:   [0.000, 0.000, 0.000, 0.000, 0.000]
+    rack_target_avg_dist: [0.600, 0.600, 0.600, 0.600, 0.600]
     rack_target_z_diff:   [-0.008, -0.008, -0.008, -0.008, -0.008]
 
-# ─────────────────────────────────────────────────────────────────────────────
-# zebra_scanner_node
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
 zebra_scanner_node:
   ros__parameters:
     scanner_id_left:  1
@@ -242,9 +159,67 @@ zebra_scanner_node:
     marker_size:      0.04
     aruco_dict_id:    10
 
-# ─────────────────────────────────────────────────────────────────────────────
-# dynamixel_scan_node
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
 dynamixel_scan_node:
   ros__parameters:
-    <<: *common_dynamixel
+    dxl_device:   "/dev/ttyDynamixel"
+    dxl_baudrate: 57600
+
+    dxl_left_id:  6
+    dxl_right_id: 7
+
+    dxl_left_scanner_id:  1
+    dxl_right_scanner_id: 2
+
+    # 왼쪽 끝점
+    dxl_left_start:         330
+    dxl_left_p0_end:        210
+    dxl_left_p1_end:       -630
+    dxl_left_p2a_end:      -720
+    dxl_left_p2_end:       -920
+    dxl_left_p3a_end:      -800   # P3a 고속 이동 종료
+    dxl_left_p3b_step_end: -870   # P3b step 종료 → 여기서 sweep 시작
+    dxl_left_end:          -970   # P3b sweep 종료 (최종)
+
+    # 오른쪽 끝점
+    dxl_right_start:         1470
+    dxl_right_p0_end:        1350
+    dxl_right_p1_end:         510
+    dxl_right_p2a_end:        630
+    dxl_right_p2_end:         390
+    dxl_right_p3a_end:        325   # P3a 고속 이동 종료
+    dxl_right_p3b_step_end:   250   # P3b step 종료 → 여기서 sweep 시작
+    dxl_right_end:            150   # P3b sweep 종료 (최종)
+
+    # 왼쪽 속도
+    dxl_left_vel_p1:     4
+    dxl_left_vel_p2a:   10
+    dxl_left_vel_p3a:   10
+    dxl_left_vel_p3b:    1    # P3b sweep 속도
+    dxl_left_vel_step:   1
+    dxl_left_vel_return: 10
+
+    # 오른쪽 속도
+    dxl_right_vel_p1:     4
+    dxl_right_vel_p2a:   10
+    dxl_right_vel_p3a:   10
+    dxl_right_vel_p3b:    1
+    dxl_right_vel_step:   1
+    dxl_right_vel_return: 10
+
+    # step 크기
+    dxl_left_p0_step:    40
+    dxl_left_p2_step:    20
+    dxl_left_p3b_step:   10   # P3b step 크기
+
+    dxl_right_p0_step:   40
+    dxl_right_p2_step:   20
+    dxl_right_p3b_step:  10   # P3b step 크기
+
+    dxl_arrive_threshold:    20
+    dxl_step_timeout_ms:   3000
+    dxl_control_period_ms:  100
+    alignment_done_delay_sec: 2.0
+
+    total_slots: 51
+    empty_slots: [0]
