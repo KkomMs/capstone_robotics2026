@@ -133,12 +133,11 @@ aruco_aligner_node:
     wheel_align_tol:    3.0
     wheel_stable_count: 5
 
-    # crab 시간 기반 이동 (IK 사용)
-    # 이동 시간 = crab_move_dist / crab_vel
-    crab_move_dist: 0.43   # ← 실측 후 조정
-    crab_vel:       0.12   # ← 실측 후 조정
-    # 왼쪽 방향 부호: +1.0 또는 -1.0 (실측 후 맞춤)
-    crab_left_sign: 1.0
+    # crab 시간 기반 이동
+    crab_move_dist:   0.50   # 왼쪽 이동 거리 [m]
+    crab_return_dist: 0.43   # 복귀 이동 거리 [m]
+    crab_vel:         0.12
+    crab_left_sign:   1.0
 
     # 마커 시퀀스 (랙1~5)
     marker_sequence_left:  [2, 4, 6, 8, 10]
@@ -177,9 +176,9 @@ dynamixel_scan_node:
     dxl_left_p1_end:       -630
     dxl_left_p2a_end:      -720
     dxl_left_p2_end:       -920
-    dxl_left_p3a_end:      -800   # P3a 고속 이동 종료
-    dxl_left_p3b_step_end: -870   # P3b step 종료 → 여기서 sweep 시작
-    dxl_left_end:          -970   # P3b sweep 종료 (최종)
+    dxl_left_p3a_end:      -800
+    dxl_left_p3b_step_end: -870
+    dxl_left_end:          -970
 
     # 오른쪽 끝점
     dxl_right_start:         1470
@@ -187,15 +186,15 @@ dynamixel_scan_node:
     dxl_right_p1_end:         510
     dxl_right_p2a_end:        630
     dxl_right_p2_end:         390
-    dxl_right_p3a_end:        325   # P3a 고속 이동 종료
-    dxl_right_p3b_step_end:   250   # P3b step 종료 → 여기서 sweep 시작
-    dxl_right_end:            150   # P3b sweep 종료 (최종)
+    dxl_right_p3a_end:        325
+    dxl_right_p3b_step_end:   250
+    dxl_right_end:            150
 
     # 왼쪽 속도
     dxl_left_vel_p1:     4
     dxl_left_vel_p2a:   10
     dxl_left_vel_p3a:   10
-    dxl_left_vel_p3b:    1    # P3b sweep 속도
+    dxl_left_vel_p3b:    1
     dxl_left_vel_step:   1
     dxl_left_vel_return: 10
 
@@ -210,11 +209,13 @@ dynamixel_scan_node:
     # step 크기
     dxl_left_p0_step:    40
     dxl_left_p2_step:    20
-    dxl_left_p3b_step:   10   # P3b step 크기
+    dxl_left_p3b_step:   10
+    dxl_left_p3b_fine_step: 3   # 마커ID=3 랙 전용 fine step
 
     dxl_right_p0_step:   40
     dxl_right_p2_step:   20
-    dxl_right_p3b_step:  10   # P3b step 크기
+    dxl_right_p3b_step:  10
+    dxl_right_p3b_fine_step: 3  # 마커ID=3 랙 전용 fine step
 
     dxl_arrive_threshold:    20
     dxl_step_timeout_ms:   3000

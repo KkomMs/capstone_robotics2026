@@ -7,7 +7,8 @@
  *   /crab_done → P2b step 스캔
  *   P2b 완료 → /dxl/p2b_done + P3a (crab 복귀 중)
  *   /crab_return_done → P3b_step (step=10, p3a_end→p3b_step_end)
- *                     → P3b_sweep (vel=1, p3b_step_end→end)
+ *                     → 일반 랙: P3b_sweep (vel=1, p3b_step_end→end)
+ *                     → 마커ID=3 랙: P3b_fine_step (step=3, p3b_step_end→end)
  *   P3b 완료 → 초기 위치 복귀 → /scan_done
  */
 
@@ -40,15 +41,18 @@ static constexpr uint8_t  EXT_POSITION_MODE     = 4;
 static constexpr uint8_t  TORQUE_ENABLE_VAL     = 1;
 static constexpr uint8_t  TORQUE_DISABLE_VAL    = 0;
 
+// 마커 ID 3에 해당하는 랙 (오른쪽 마커 기준)
+static constexpr int kRack3MarkerId = 3;
+
 enum class MotorState {
     P0_STEP_MOVE, P0_STEP_WAIT,
     P1_SWEEP,
     P2A_MOVE,
     P2B_STEP_MOVE, P2B_STEP_WAIT,
     P3A_MOVE,
-    // P3b 두 단계
-    P3B_STEP_MOVE, P3B_STEP_WAIT,   // step=10, p3a_end → p3b_step_end
-    P3B_SWEEP,                       // vel=1,   p3b_step_end → end
+    P3B_STEP_MOVE, P3B_STEP_WAIT,        // step=10, p3a_end → p3b_step_end
+    P3B_SWEEP,                            // vel=1,   p3b_step_end → end  (일반 랙)
+    P3B_FINE_STEP_MOVE, P3B_FINE_STEP_WAIT,  // step=3, p3b_step_end → end  (마커ID=3 랙)
     RETURNING,
     DONE
 };
@@ -73,19 +77,20 @@ struct MotorAxis {
     int32_t p2a_end      = 0;
     int32_t p2_end       = 0;
     int32_t p3a_end      = 0;
-    int32_t p3b_step_end = 0;   // P3b step 종료점 (P3b sweep 시작점)
-    int32_t end          = 0;   // 최종 종료점
+    int32_t p3b_step_end = 0;
+    int32_t end          = 0;
 
     int vel_p1     = 4;
     int vel_p2a    = 10;
     int vel_p3a    = 10;
-    int vel_p3b    = 1;    // P3b sweep 속도
+    int vel_p3b    = 1;
     int vel_step   = 1;
     int vel_return = 10;
 
     int p0_step   = 40;
     int p2_step   = 20;
-    int p3b_step  = 10;   // P3b step 크기
+    int p3b_step  = 10;
+    int p3b_fine_step = 3;   // 마커ID=3 랙 전용 fine step
 
     int32_t      current_tick    = 0;
     int32_t      goal_tick       = 0;
@@ -136,13 +141,13 @@ public:
             "/aruco_markers_left", qos,
             [this](const ros2_aruco_interfaces::msg::ArucoMarkers::SharedPtr msg) {
                 if (!msg->marker_ids.empty())
-                    current_rack_no_ = static_cast<int>(msg->marker_ids[0]);
+                    current_rack_marker_id_ = static_cast<int>(msg->marker_ids[0]);
             });
         sub_aruco_right_ = this->create_subscription<ros2_aruco_interfaces::msg::ArucoMarkers>(
             "/aruco_markers_right", qos,
             [this](const ros2_aruco_interfaces::msg::ArucoMarkers::SharedPtr msg) {
                 if (!msg->marker_ids.empty())
-                    current_rack_no_ = static_cast<int>(msg->marker_ids[0]);
+                    current_rack_marker_id_ = static_cast<int>(msg->marker_ids[0]);
             });
 
         sub_alignment_done_ = this->create_subscription<std_msgs::msg::Bool>(
@@ -150,8 +155,10 @@ public:
             [this](const std_msgs::msg::Bool::SharedPtr msg) {
                 if (msg->data && !scanning_.load()) {
                     RCLCPP_INFO(get_logger(),
-                        "[DXL] alignment_done → %.1f초 후 스캔 시작",
-                        p_.alignment_done_delay_sec);
+                        "[DXL] alignment_done → %.1f초 후 스캔 시작 (마커ID=%d, %s)",
+                        p_.alignment_done_delay_sec,
+                        current_rack_marker_id_,
+                        IsRack3() ? "랙3=fine_step" : "일반=sweep");
                     std::thread([this]() {
                         usleep(static_cast<useconds_t>(
                             p_.alignment_done_delay_sec * 1e6));
@@ -200,22 +207,25 @@ public:
     ~DynamixelScanNode() { CloseDxl(); }
 
 private:
+    // 현재 랙이 마커ID=3인지 (P3b fine step 적용)
+    bool IsRack3() const { return current_rack_marker_id_ == kRack3MarkerId; }
+
     struct Params {
         std::string device   = "/dev/ttyDynamixel";
         int         baudrate = 57600;
         int left_id=6, right_id=7;
         int left_scanner_id=1, right_scanner_id=2;
 
-        int32_t left_start=330, left_p0_end=210, left_p1_end=-595;
-        int32_t left_p2a_end=-720, left_p2_end=-900;
+        int32_t left_start=330, left_p0_end=210, left_p1_end=-630;
+        int32_t left_p2a_end=-720, left_p2_end=-920;
         int32_t left_p3a_end=-800;
-        int32_t left_p3b_step_end=-870;  // P3b step 종료 (여기서 sweep 시작)
+        int32_t left_p3b_step_end=-870;
         int32_t left_end=-970;
 
-        int32_t right_start=1470, right_p0_end=1350, right_p1_end=545;
-        int32_t right_p2a_end=630, right_p2_end=410;
+        int32_t right_start=1470, right_p0_end=1350, right_p1_end=510;
+        int32_t right_p2a_end=630, right_p2_end=390;
         int32_t right_p3a_end=325;
-        int32_t right_p3b_step_end=250;  // P3b step 종료
+        int32_t right_p3b_step_end=250;
         int32_t right_end=150;
 
         int left_vel_p1=4, left_vel_p2a=10, left_vel_p3a=10;
@@ -224,8 +234,8 @@ private:
         int right_vel_p1=4, right_vel_p2a=10, right_vel_p3a=10;
         int right_vel_p3b=1, right_vel_step=1, right_vel_return=10;
 
-        int left_p0_step=40,  left_p2_step=20,  left_p3b_step=10;
-        int right_p0_step=40, right_p2_step=20, right_p3b_step=10;
+        int left_p0_step=40,  left_p2_step=20,  left_p3b_step=10,  left_p3b_fine_step=3;
+        int right_p0_step=40, right_p2_step=20, right_p3b_step=10, right_p3b_fine_step=3;
 
         int    arrive_threshold=20;
         int    step_timeout_ms=3000;
@@ -287,10 +297,12 @@ private:
         p_.left_p0_step=gi("dxl_left_p0_step");
         p_.left_p2_step=gi("dxl_left_p2_step");
         p_.left_p3b_step=gi("dxl_left_p3b_step");
+        p_.left_p3b_fine_step=gi("dxl_left_p3b_fine_step");
 
         p_.right_p0_step=gi("dxl_right_p0_step");
         p_.right_p2_step=gi("dxl_right_p2_step");
         p_.right_p3b_step=gi("dxl_right_p3b_step");
+        p_.right_p3b_fine_step=gi("dxl_right_p3b_fine_step");
 
         p_.arrive_threshold         = gi("dxl_arrive_threshold");
         p_.step_timeout_ms          = gi("dxl_step_timeout_ms");
@@ -308,7 +320,7 @@ private:
             int32_t p2ae, int32_t p2e,
             int32_t p3ae, int32_t p3bse, int32_t en,
             int vp1, int vp2a, int vp3a, int vp3b, int vstep, int vret,
-            int s0, int s2, int s3b)
+            int s0, int s2, int s3b, int s3bf)
         {
             ax.id=id; ax.name=nm;
             ax.start=st; ax.p0_end=p0e; ax.p1_end=p1e;
@@ -316,7 +328,7 @@ private:
             ax.p3a_end=p3ae; ax.p3b_step_end=p3bse; ax.end=en;
             ax.vel_p1=vp1; ax.vel_p2a=vp2a; ax.vel_p3a=vp3a;
             ax.vel_p3b=vp3b; ax.vel_step=vstep; ax.vel_return=vret;
-            ax.p0_step=s0; ax.p2_step=s2; ax.p3b_step=s3b;
+            ax.p0_step=s0; ax.p2_step=s2; ax.p3b_step=s3b; ax.p3b_fine_step=s3bf;
             ax.state=MotorState::DONE;
         };
 
@@ -326,7 +338,7 @@ private:
              p_.left_p3a_end, p_.left_p3b_step_end, p_.left_end,
              p_.left_vel_p1, p_.left_vel_p2a, p_.left_vel_p3a,
              p_.left_vel_p3b, p_.left_vel_step, p_.left_vel_return,
-             p_.left_p0_step, p_.left_p2_step, p_.left_p3b_step);
+             p_.left_p0_step, p_.left_p2_step, p_.left_p3b_step, p_.left_p3b_fine_step);
 
         fill(right_, p_.right_id, "RIGHT",
              p_.right_start, p_.right_p0_end, p_.right_p1_end,
@@ -334,7 +346,7 @@ private:
              p_.right_p3a_end, p_.right_p3b_step_end, p_.right_end,
              p_.right_vel_p1, p_.right_vel_p2a, p_.right_vel_p3a,
              p_.right_vel_p3b, p_.right_vel_step, p_.right_vel_return,
-             p_.right_p0_step, p_.right_p2_step, p_.right_p3b_step);
+             p_.right_p0_step, p_.right_p2_step, p_.right_p3b_step, p_.right_p3b_fine_step);
     }
 
     void InitDxl()
@@ -445,7 +457,7 @@ private:
         SendStep(ax, ax.p3b_step_end, ax.p3b_step);
     }
 
-    // P3b 2단계: vel=vel_p3b(1), p3b_step_end → end
+    // P3b 2단계 (일반): vel=vel_p3b(1), sweep
     void StartP3bSweep(MotorAxis & ax)
     {
         ax.goal_tick = ax.end;
@@ -453,6 +465,15 @@ private:
         WriteVelGoal(ax.id, ax.vel_p3b, ax.end);
         RCLCPP_INFO(get_logger(), "[%s] P3b_sweep vel=%d goal=%d",
             ax.name.c_str(), ax.vel_p3b, ax.end);
+    }
+
+    // P3b 2단계 (마커ID=3 랙): step=p3b_fine_step(3), p3b_step_end → end
+    void StartP3bFineStep(MotorAxis & ax)
+    {
+        ax.state = MotorState::P3B_FINE_STEP_MOVE;
+        RCLCPP_INFO(get_logger(), "[%s] P3b_fine_step goal=%d step=%d (마커ID=3)",
+            ax.name.c_str(), ax.end, ax.p3b_fine_step);
+        SendStep(ax, ax.end, ax.p3b_fine_step);
     }
 
     void StartReturn(MotorAxis & ax)
@@ -469,7 +490,6 @@ private:
             ax.name.c_str(), ax.vel_return, ax.start);
     }
 
-    // ── step 헬퍼 ────────────────────────────────────────────────
     void SendStep(MotorAxis & ax, int32_t limit, int step)
     {
         int32_t next = std::max(ax.goal_tick - step, limit);
@@ -504,18 +524,35 @@ private:
             ax.state = MotorState::P2B_STEP_MOVE;
             SendStep(ax, ax.p2_end, ax.p2_step); return;
         }
-        // P3b step
+        // P3b step (1단계)
         if (ax.state == MotorState::P3B_STEP_MOVE || ax.state == MotorState::P3B_STEP_WAIT) {
             if (ax.current_tick <= ax.p3b_step_end + p_.arrive_threshold) {
-                RCLCPP_INFO(get_logger(), "[%s] P3b_step done → P3b_sweep", ax.name.c_str());
-                StartP3bSweep(ax); return;
+                // 마커ID=3 랙이고 오른쪽 축만 fine step, 나머지는 sweep
+                bool is_right = (&ax == &right_);
+                if (IsRack3() && is_right) {
+                    RCLCPP_INFO(get_logger(), "[%s] P3b_step 완료 → P3b_fine_step (마커ID=3 오른쪽)",
+                        ax.name.c_str());
+                    StartP3bFineStep(ax);
+                } else {
+                    RCLCPP_INFO(get_logger(), "[%s] P3b_step 완료 → P3b_sweep",
+                        ax.name.c_str());
+                    StartP3bSweep(ax);
+                }
+                return;
             }
             ax.state = MotorState::P3B_STEP_MOVE;
             SendStep(ax, ax.p3b_step_end, ax.p3b_step); return;
         }
+        // P3b fine step (2단계, 마커ID=3 전용)
+        if (ax.state == MotorState::P3B_FINE_STEP_MOVE || ax.state == MotorState::P3B_FINE_STEP_WAIT) {
+            if (ax.current_tick <= ax.end + p_.arrive_threshold) {
+                StartReturn(ax); return;
+            }
+            ax.state = MotorState::P3B_FINE_STEP_MOVE;
+            SendStep(ax, ax.end, ax.p3b_fine_step); return;
+        }
     }
 
-    // ── 바코드 이벤트 ────────────────────────────────────────────
     void OnBarcodeEvent(const scanner_interfaces::msg::BarcodeEvent & msg)
     {
         if (!scanning_.load()) return;
@@ -530,14 +567,16 @@ private:
         else if (sid == p_.right_scanner_id) ax = &right_;
         else { RCLCPP_WARN(get_logger(), "[DXL] unknown sid=%d", sid); return; }
 
-        // P2b step, P3b step 구간에서만 즉시 다음 step
-        if (ax->state == MotorState::P2B_STEP_MOVE || ax->state == MotorState::P3B_STEP_MOVE)
+        if (ax->state == MotorState::P2B_STEP_MOVE  ||
+            ax->state == MotorState::P3B_STEP_MOVE   ||
+            ax->state == MotorState::P3B_FINE_STEP_MOVE)
             HaltAndNext(*ax);
-        else if (ax->state == MotorState::P2B_STEP_WAIT || ax->state == MotorState::P3B_STEP_WAIT)
+        else if (ax->state == MotorState::P2B_STEP_WAIT  ||
+                 ax->state == MotorState::P3B_STEP_WAIT   ||
+                 ax->state == MotorState::P3B_FINE_STEP_WAIT)
             StepToNext(*ax);
     }
 
-    // ── 제어 루프 ────────────────────────────────────────────────
     void ControlLoop()
     {
         if (!scanning_.load()) return;
@@ -562,7 +601,6 @@ private:
         };
 
         switch (scan_phase_) {
-
         case ScanPhase::P0_P1:
             if (both_done()) {
                 RCLCPP_INFO(get_logger(), "[DXL] P1 완료 → /dxl/p1_done + P2a");
@@ -571,10 +609,7 @@ private:
                 pub_bool(pub_p1_done_);
             }
             break;
-
-        case ScanPhase::WAIT_CRAB:
-            break;
-
+        case ScanPhase::WAIT_CRAB: break;
         case ScanPhase::P2B_RUNNING:
             if (both_done()) {
                 RCLCPP_INFO(get_logger(), "[DXL] P2b 완료 → /dxl/p2b_done + P3a");
@@ -583,10 +618,7 @@ private:
                 pub_bool(pub_p2b_done_);
             }
             break;
-
-        case ScanPhase::WAIT_CRAB_RTN:
-            break;
-
+        case ScanPhase::WAIT_CRAB_RTN: break;
         case ScanPhase::P3B_RUNNING:
             if (both_done()) {
                 RCLCPP_INFO(get_logger(), "[DXL] P3b 완료 → 복귀");
@@ -594,90 +626,78 @@ private:
                 StartReturn(left_); StartReturn(right_);
             }
             break;
-
         case ScanPhase::RETURNING:
             if (both_done()) {
                 RCLCPP_INFO(get_logger(), "[DXL] 복귀 완료 → scan finish");
                 FinishScan();
             }
             break;
-
         case ScanPhase::IDLE: default: break;
         }
     }
 
-    // ── 축 상태 머신 ─────────────────────────────────────────────
     void UpdateAxis(MotorAxis & ax)
     {
         switch (ax.state) {
-
         case MotorState::P0_STEP_MOVE:
             if (!ax.arrived(p_.arrive_threshold)) return;
             ax.state = MotorState::P0_STEP_WAIT;
-            ax.wait_start = this->now();
-            break;
-
+            ax.wait_start = this->now(); break;
         case MotorState::P0_STEP_WAIT:
             if ((this->now()-ax.wait_start).seconds()*1000.0 < p_.step_timeout_ms) return;
             RCLCPP_WARN(get_logger(), "[%s P0 TIMEOUT]", ax.name.c_str());
             StepToNext(ax); break;
-
         case MotorState::P1_SWEEP:
             if (!ax.arrived(p_.arrive_threshold)) return;
             RCLCPP_INFO(get_logger(), "[%s] P1 done", ax.name.c_str());
             ax.state = MotorState::DONE; break;
-
         case MotorState::P2A_MOVE:
             if (!ax.arrived(p_.arrive_threshold)) return;
             RCLCPP_INFO(get_logger(), "[%s] P2a done", ax.name.c_str());
             ax.state = MotorState::DONE; break;
-
         case MotorState::P2B_STEP_MOVE:
             if (!ax.arrived(p_.arrive_threshold)) return;
             ax.state = MotorState::P2B_STEP_WAIT;
             ax.wait_start = this->now();
-            RCLCPP_INFO(get_logger(), "[%s P2b WAIT] tick=%d", ax.name.c_str(), ax.current_tick);
-            break;
-
+            RCLCPP_INFO(get_logger(), "[%s P2b WAIT] tick=%d", ax.name.c_str(), ax.current_tick); break;
         case MotorState::P2B_STEP_WAIT:
             if ((this->now()-ax.wait_start).seconds()*1000.0 < p_.step_timeout_ms) return;
             RCLCPP_WARN(get_logger(), "[%s P2b TIMEOUT]", ax.name.c_str());
             StepToNext(ax); break;
-
         case MotorState::P3A_MOVE:
             if (!ax.arrived(p_.arrive_threshold)) return;
             RCLCPP_INFO(get_logger(), "[%s] P3a done", ax.name.c_str());
             ax.state = MotorState::DONE; break;
-
-        // P3b 1단계: step
         case MotorState::P3B_STEP_MOVE:
             if (!ax.arrived(p_.arrive_threshold)) return;
             ax.state = MotorState::P3B_STEP_WAIT;
             ax.wait_start = this->now();
-            RCLCPP_INFO(get_logger(), "[%s P3b_step WAIT] tick=%d", ax.name.c_str(), ax.current_tick);
-            break;
-
+            RCLCPP_INFO(get_logger(), "[%s P3b_step WAIT] tick=%d", ax.name.c_str(), ax.current_tick); break;
         case MotorState::P3B_STEP_WAIT:
             if ((this->now()-ax.wait_start).seconds()*1000.0 < p_.step_timeout_ms) return;
             RCLCPP_WARN(get_logger(), "[%s P3b_step TIMEOUT]", ax.name.c_str());
             StepToNext(ax); break;
-
-        // P3b 2단계: sweep (vel=1)
         case MotorState::P3B_SWEEP:
             if (!ax.arrived(p_.arrive_threshold)) return;
             RCLCPP_INFO(get_logger(), "[%s] P3b_sweep done → return", ax.name.c_str());
             StartReturn(ax); break;
-
+        case MotorState::P3B_FINE_STEP_MOVE:
+            if (!ax.arrived(p_.arrive_threshold)) return;
+            ax.state = MotorState::P3B_FINE_STEP_WAIT;
+            ax.wait_start = this->now();
+            RCLCPP_INFO(get_logger(), "[%s P3b_fine WAIT] tick=%d", ax.name.c_str(), ax.current_tick); break;
+        case MotorState::P3B_FINE_STEP_WAIT:
+            if ((this->now()-ax.wait_start).seconds()*1000.0 < p_.step_timeout_ms) return;
+            RCLCPP_WARN(get_logger(), "[%s P3b_fine TIMEOUT]", ax.name.c_str());
+            StepToNext(ax); break;
         case MotorState::RETURNING:
             if (!ax.arrived(p_.arrive_threshold)) return;
             RCLCPP_INFO(get_logger(), "[%s] returned", ax.name.c_str());
             ax.state = MotorState::DONE; break;
-
         case MotorState::DONE: break;
         }
     }
 
-    // ── 결과 출력 ────────────────────────────────────────────────
     void PrintAxisSummary(const std::string & axis_name, int sid)
     {
         RCLCPP_INFO(get_logger(), "\n========== %s RESULT ==========", axis_name.c_str());
@@ -713,15 +733,14 @@ private:
         RCLCPP_INFO(get_logger(), "[DXL] /scan_done published");
     }
 
-    // ── 멤버 변수 ────────────────────────────────────────────────
     Params        p_;
     MotorAxis     left_, right_;
     ScanStats     scan_stats_;
     std::set<int> empty_slots_set_;
 
     std::atomic<bool> scanning_{false};
-    ScanPhase         scan_phase_      = ScanPhase::IDLE;
-    int               current_rack_no_ = -1;
+    ScanPhase         scan_phase_            = ScanPhase::IDLE;
+    int               current_rack_marker_id_ = -1;  // 오른쪽 또는 왼쪽 마커 ID
 
     dynamixel::PortHandler*   port_handler_   = nullptr;
     dynamixel::PacketHandler* packet_handler_ = nullptr;

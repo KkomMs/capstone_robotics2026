@@ -6,8 +6,8 @@
  *   - /dxl/p1_done → 시간 기반 crab 왼쪽 이동 → /crab_done
  *   - /dxl/p2b_done → 시간 기반 crab 오른쪽 복귀 → /crab_return_done
  *
- * 기존 PublishFixed의 steer_tol 체크 유지
- * (조향 수렴 후 인휠 동작)
+ * PublishFixed의 steer_tol 체크로 조향 수렴 후 인휠 동작
+ * IK 없음 - 모든 이동 PublishFixed 사용
  */
 
 #include <algorithm>
@@ -23,7 +23,6 @@
 #include "std_msgs/msg/float32.hpp"
 #include "std_msgs/msg/float32_multi_array.hpp"
 #include "ros2_aruco_interfaces/msg/aruco_markers.hpp"
-#include "fwis_robot/kinematics.hpp"
 
 namespace {
 
@@ -130,7 +129,6 @@ public:
                 StartAlign();
             });
 
-        // DXL 핸드셰이크
         sub_p1_done_ = this->create_subscription<std_msgs::msg::Bool>(
             "/dxl/p1_done", qos,
             [this](const std_msgs::msg::Bool::SharedPtr msg) {
@@ -152,11 +150,13 @@ public:
         last_time_ = this->get_clock()->now();
         ApplyCurrentSequence();
 
-        double crab_time = (p_.crab_vel > 0.0) ? p_.crab_move_dist / p_.crab_vel : 0.0;
         RCLCPP_INFO(get_logger(),
-            "[ArucoAligner] start | 시퀀스=%zu세트 | crab=%.3fm@%.3fm/s=%.2f초 sign=%.1f",
-            marker_sequences_.size(), p_.crab_move_dist, p_.crab_vel,
-            crab_time, p_.crab_left_sign);
+            "[ArucoAligner] start | 시퀀스=%zu세트 | "
+            "crab이동=%.3fm@%.3fm/s=%.2f초 | crab복귀=%.3fm@%.3fm/s=%.2f초 | sign=%.1f",
+            marker_sequences_.size(),
+            p_.crab_move_dist,   p_.crab_vel, p_.crab_move_dist   / p_.crab_vel,
+            p_.crab_return_dist, p_.crab_vel, p_.crab_return_dist / p_.crab_vel,
+            p_.crab_left_sign);
         LogCurrentSequence();
     }
 
@@ -164,10 +164,9 @@ private:
     enum class Side  { LEFT, RIGHT };
     enum class State {
         WAITING, DETECTED, ALIGNING, DONE,
-        CRAB_MOVE,  // 시간 기반 왼쪽 crab
-        CRAB_RTN,   // 시간 기반 오른쪽 crab 복귀
+        CRAB_MOVE,
+        CRAB_RTN,
     };
-    // Phase: 기존 + WHEEL_ALIGN 추가
     enum class Phase { YAW, YAW_SETTLE, X, Z, YAW_FINE, SEARCH, WHEEL_ALIGN };
 
     struct MF {
@@ -183,7 +182,6 @@ private:
     };
 
     struct Params {
-        // 기존 파라미터 (원본 그대로)
         double ref_x=0.0, ref_yaw_left=0.0, ref_yaw_right=0.0;
         double target_avg_dist=0.0, target_z_diff=0.0;
         int    marker_id_left=2, marker_id_right=1;
@@ -207,22 +205,15 @@ private:
 
         double marker_timeout=1.5, lpf_alpha=0.3, outlier_thr=0.5;
         double sign_yaw=-1.0, sign_x=1.0, sign_dist=-1.0, sign_diff=1.0;
-        double steer_tol=5.0;  // ← 기존 steer_tol 유지
+        double steer_tol=5.0;
 
-        // 추가 파라미터
-        double wheel_align_tol=3.0;    // WHEEL_ALIGN 바퀴 수렴 허용 오차 [deg]
-        int    wheel_stable_count=5;   // WHEEL_ALIGN 안정 카운트
+        double wheel_align_tol=3.0;
+        int    wheel_stable_count=5;
 
-        double crab_move_dist=0.43;    // crab 이동 거리 [m]
-        double crab_vel=0.12;          // crab 이동 속도 [m/s]
-        double crab_left_sign=1.0;     // 왼쪽 방향 부호
-
-        // Kinematics (Z 페이즈 + crab IK용)
-        double wheel_radius=0.0695;
-        double wheel_x_offset=0.215;
-        double wheel_y_offset=0.215;
-        double deadzone_linear=0.005;
-        double deadzone_angular=0.005;
+        double crab_move_dist=0.50;
+        double crab_return_dist=0.43;
+        double crab_vel=0.12;
+        double crab_left_sign=1.0;
     };
 
     struct Errors {
@@ -232,15 +223,11 @@ private:
         double e_yaw_l=0.0, e_yaw_r=0.0, e_z_diff_l=0.0;
     };
 
-    // ════════════════════════════════════════════════════════
-    //  파라미터 로드 (기존 + 추가분)
-    // ════════════════════════════════════════════════════════
     void LoadParams()
     {
         auto g  = [this](const std::string & n){ return get_parameter(n).as_double(); };
         auto gi = [this](const std::string & n){ return (int)get_parameter(n).as_int(); };
 
-        // 기존 파라미터 (원본 그대로)
         p_.ref_x=g("ref_x"); p_.ref_yaw_left=g("ref_yaw_left");
         p_.ref_yaw_right=g("ref_yaw_right");
         p_.target_avg_dist=g("target_avg_dist"); p_.target_z_diff=g("target_z_diff");
@@ -270,27 +257,12 @@ private:
         p_.sign_dist=g("sign_dist"); p_.sign_diff=g("sign_diff");
         p_.steer_tol=g("steer_position_tolerance");
 
-        // 추가 파라미터
-        p_.wheel_align_tol   = g("wheel_align_tol");
+        p_.wheel_align_tol    = g("wheel_align_tol");
         p_.wheel_stable_count = gi("wheel_stable_count");
-        p_.crab_move_dist    = g("crab_move_dist");
-        p_.crab_vel          = g("crab_vel");
-        p_.crab_left_sign    = g("crab_left_sign");
-
-        p_.wheel_radius    = g("wheel_radius");
-        p_.wheel_x_offset  = g("wheel_x_offset");
-        p_.wheel_y_offset  = g("wheel_y_offset");
-        p_.deadzone_linear = g("deadzone_linear");
-        p_.deadzone_angular= g("deadzone_angular");
-
-        // Kinematics 초기화
-        ::Params kp;
-        kp.wheel_radius    = p_.wheel_radius;
-        kp.wheel_x_offset  = p_.wheel_x_offset;
-        kp.wheel_y_offset  = p_.wheel_y_offset;
-        kp.deadzone_linear = p_.deadzone_linear;
-        kp.deadzone_angular= p_.deadzone_angular;
-        kinematics_.SetParams(kp);
+        p_.crab_move_dist     = g("crab_move_dist");
+        p_.crab_return_dist   = g("crab_return_dist");
+        p_.crab_vel           = g("crab_vel");
+        p_.crab_left_sign     = g("crab_left_sign");
 
         LoadMarkerSequences();
     }
@@ -364,9 +336,6 @@ private:
             sequence_index_+1, marker_sequences_.size(), id_str.c_str());
     }
 
-    // ════════════════════════════════════════════════════════
-    //  기존 함수들 (원본 그대로)
-    // ════════════════════════════════════════════════════════
     bool IsFresh(const rclcpp::Time & t) {
         return t.nanoseconds() > 0 &&
                (get_clock()->now() - t).seconds() <= p_.marker_timeout;
@@ -398,7 +367,6 @@ private:
     void MarkerCb(const ros2_aruco_interfaces::msg::ArucoMarkers::SharedPtr msg, Side side)
     {
         if (msg->marker_ids.empty() || state_ == State::DONE) return;
-        // crab 이동 중엔 마커 무시 (바코드 모드라 어차피 안 옴)
         if (state_ == State::CRAB_MOVE || state_ == State::CRAB_RTN) return;
 
         for (size_t i = 0; i < msg->marker_ids.size(); ++i) {
@@ -426,8 +394,7 @@ private:
     void StartAlign()
     {
         if (state_ != State::DETECTED) {
-            RCLCPP_WARN(get_logger(),
-                "[ArucoAligner] /aruco_start but state=%d", (int)state_);
+            RCLCPP_WARN(get_logger(), "[ArucoAligner] /aruco_start but state=%d", (int)state_);
             return;
         }
         PublishPause(true);
@@ -447,7 +414,6 @@ private:
         RCLCPP_INFO(get_logger(), "[ArucoAligner] 정렬 시작");
     }
 
-    // ── DXL 핸드셰이크 ─────────────────────────────────────────
     void OnP1Done()
     {
         if (state_ != State::DONE) {
@@ -480,11 +446,11 @@ private:
     {
         state_            = State::CRAB_RTN;
         crab_elapsed_     = 0.0;
-        crab_target_time_ = (p_.crab_vel > 0.0) ? p_.crab_move_dist / p_.crab_vel : 0.0;
+        crab_target_time_ = (p_.crab_vel > 0.0) ? p_.crab_return_dist / p_.crab_vel : 0.0;
         crab_dir_sign_    = -p_.crab_left_sign;
         RCLCPP_INFO(get_logger(),
             "[ArucoAligner] crab 복귀 | %.3fm @ %.3fm/s = %.2f초 (sign=%.1f)",
-            p_.crab_move_dist, p_.crab_vel, crab_target_time_, crab_dir_sign_);
+            p_.crab_return_dist, p_.crab_vel, crab_target_time_, crab_dir_sign_);
     }
 
     Errors ComputeErrors()
@@ -547,16 +513,13 @@ private:
         if (dt <= 0.0 || dt > 1.0) dt = 0.02;
         last_time_ = now;
 
-        // crab 이동은 별도 처리
         if (state_ == State::CRAB_MOVE) { RunCrabTimed(dt, false); return; }
         if (state_ == State::CRAB_RTN)  { RunCrabTimed(dt, true);  return; }
 
         if (state_ != State::ALIGNING) return;
 
-        // WHEEL_ALIGN 페이즈
         if (phase_ == Phase::WHEEL_ALIGN) { RunWheelAlign(); return; }
 
-        // ── 기존 정렬 로직 (원본 그대로) ──────────────────────
         const Errors e = ComputeErrors();
 
         if (!e.ok) {
@@ -659,7 +622,6 @@ private:
         } else if (phase_==Phase::YAW_FINE) {
             yaw_fine_ok_count_ = yaw_ok ? yaw_fine_ok_count_+1 : 0;
             if (yaw_fine_ok_count_ >= p_.yaw_ok_required_count) {
-                // YAW_FINE 완료 → WHEEL_ALIGN 진입
                 PublishStop();
                 phase_ = Phase::WHEEL_ALIGN;
                 wheel_stable_cnt_ = 0;
@@ -668,7 +630,6 @@ private:
             }
         }
 
-        // both_visible 카운터 안정화 (원본 그대로)
         if (e.both_visible) both_visible_count_++;
         else { both_visible_count_=0; was_both_visible_=false; }
 
@@ -729,9 +690,7 @@ private:
             if (!diff_ok && e.both_visible) spd += p_.sign_diff*p_.kp_diff*e.e_z_diff;
             if (std::fabs(spd)>1e-6)
                 spd = ApplyMinAbs(Clamp(spd,-p_.max_vy,p_.max_vy),p_.min_vy);
-            // IK 사용: linear_y 기반으로 바퀴 각도 자동 계산
-            // (앞/뒤 좌우 바퀴가 반대 방향으로 계산되어 몸체 안정)
-            PublishIK(0.0, spd, 0.0);
+            PublishFixed(kCrabSteerAngles, kSameInwheelSign, spd);
             break;
         }
         case Phase::SEARCH: break;
@@ -739,17 +698,11 @@ private:
         }
     }
 
-    // ════════════════════════════════════════════════════════
-    //  WHEEL_ALIGN: 바퀴 90도 수렴 대기 (추가)
-    // ════════════════════════════════════════════════════════
+    // WHEEL_ALIGN: 바퀴 90도 수렴 (PublishFixed로 steer_tol 체크 동일하게)
     void RunWheelAlign()
     {
-        // 스티어 90도 명령, 인휠 0
         PublishFixed(kCrabSteerAngles, kSameInwheelSign, 0.0);
 
-        // 바퀴가 IK 계산값에 수렴했는지 확인
-        // IK로 linear_y 주면 앞 FL≈+90, FR≈-90, 뒤 RL≈+90, RR≈-90 (또는 반대)
-        // steer_fb_ 절댓값이 90도 근처인지만 확인
         bool all_at_90 = true;
         for (int i = 0; i < 4; ++i) {
             if (std::fabs(std::fabs(steer_fb_[i]) - 90.0) > p_.wheel_align_tol) {
@@ -780,9 +733,7 @@ private:
         }
     }
 
-    // ════════════════════════════════════════════════════════
-    //  crab 시간 기반 이동 (추가)
-    // ════════════════════════════════════════════════════════
+    // crab 시간 기반 이동 (PublishFixed로 steer_tol 체크)
     void RunCrabTimed(double dt, bool is_return)
     {
         crab_elapsed_ += dt;
@@ -806,27 +757,10 @@ private:
             return;
         }
 
-        // IK 사용: linear_y 기반으로 바퀴 각도 자동 계산
-        PublishIK(0.0, crab_dir_sign_*p_.crab_vel, 0.0);
+        PublishFixed(kCrabSteerAngles, kSameInwheelSign, crab_dir_sign_*p_.crab_vel);
     }
 
-    // ════════════════════════════════════════════════════════
-    //  기존 Publish 함수 (원본 그대로 - steer_tol 체크 유지)
-    // ════════════════════════════════════════════════════════
-    // IK 기반 publish (Z 페이즈 + crab 이동 전용)
-    void PublishIK(double vx, double vy, double wz)
-    {
-        std::vector<double> steers(steer_fb_.begin(), steer_fb_.end());
-        auto cmds = kinematics_.InverseKinematics(vx, vy, wz, steers);
-        for (int i = 0; i < 4; ++i) {
-            std_msgs::msg::Float32 s, w;
-            s.data = (float)cmds[i].steering_ang;
-            w.data = (float)cmds[i].wheel_vel;
-            steer_pubs_[i]->publish(s);
-            inwheel_pubs_[i]->publish(w);
-        }
-    }
-
+    // 모든 이동: steer_tol 체크 후 인휠 동작 (조향 수렴 후 인휠)
     void PublishFixed(const std::array<double,4> & steers,
                       const std::array<double,4> & signs, double vel)
     {
@@ -848,22 +782,6 @@ private:
         }
     }
 
-    void OnAlignDone(const Errors & e)
-    {
-        PublishStop();
-        state_ = State::DONE;
-        double elapsed = (get_clock()->now()-align_start_t_).seconds();
-        RCLCPP_INFO(get_logger(),
-            "[ArucoAligner] ★ 정렬 완료 ★ trial=%d seq=[%zu/%zu] time=%.3fs | "
-            "yaw=%.2fdeg ctr=%.1fmm dist=%.1fmm diff=%.1fmm",
-            trial_count_, sequence_index_+1, marker_sequences_.size(), elapsed,
-            std::fabs(e.e_yaw)*180.0/M_PI,
-            std::fabs(e.e_x)*1000.0,
-            std::fabs(e.e_z_avg)*1000.0,
-            std::fabs(e.e_z_diff)*1000.0);
-        std_msgs::msg::Bool dm; dm.data=true; done_pub_->publish(dm);
-    }
-
     void ResetForNextCycle()
     {
         if (marker_sequences_.size() > 1) {
@@ -883,11 +801,7 @@ private:
             sequence_index_+1, marker_sequences_.size());
     }
 
-    // ════════════════════════════════════════════════════════
-    //  멤버 변수
-    // ════════════════════════════════════════════════════════
     Params p_;
-    Kinematics kinematics_;   // Z 페이즈 + crab IK용
     std::vector<MarkerSet> marker_sequences_;
     size_t sequence_index_ = 0;
 
@@ -908,7 +822,6 @@ private:
     rclcpp::Time yaw_settle_t_   {0,0,RCL_ROS_TIME};
     rclcpp::Time align_start_t_  {0,0,RCL_ROS_TIME};
 
-    // 추가 변수
     int    wheel_stable_cnt_  = 0;
     double crab_elapsed_      = 0.0;
     double crab_target_time_  = 0.0;
