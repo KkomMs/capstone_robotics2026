@@ -28,10 +28,22 @@ MARKER_MAP_POSES = {
     4: (2.92,  -2.82),
 }
 
+# 랙 사이 직접 구동 파라미터
 RACK_DRIVE_WP_IDX = 2       # 직접 구동 시작하는 wp index
 LAST_MARKER_IDX = 4         # 마지막 마커 index. 해당 마커 스캔 후 nav2 복귀
 DIRECT_DRIVE_SPEED = 0.20   # 랙 사이 직진 속도
 DIRECT_DRIVE_HZ = 20        # cmd_vel publish 주기
+
+# 랙 진입 전 heading 정밀 정렬 파라미터
+HEADING_ALIGN_WP_IDX  = 1                   # 정밀 heading 정렬 대상 wp index
+HEADING_KP            = 0.8                 # P gain
+HEADING_KD            = 0.1                 # D gain
+HEADING_MIN_W         = 0.25                # 최소 각속도
+HEADING_MAX_W         = 0.40                # 최대 각속도
+HEADING_TOLERANCE     = math.radians(1.5)   # 정렬 판정 허용 오차
+HEADING_STABLE_COUNT  = 5                   # 연속 N회 tolerance 이내 -> 수렴 완료
+HEADING_TIMEOUT       = 10.0                # 타임아웃 [s]
+HEADING_CTRL_HZ       = 20                  # 제어 루프 주기 [Hz]
 
 def yaw2quaternion(yaw: float) -> Quaternion:
     q = Quaternion()
@@ -299,6 +311,90 @@ class MissionBridge(Node):
         self.cmd_vel_pub.publish(stop_msg)
         self.get_logger().info('[MissionBridge] cmd_vel 직접 구동 정지')
 
+def direct_heading_align(bridge: MissionBridge, target_yaw: float) -> bool:
+    """
+    cmd_vel.angular.z 직접 publish하여 heading 정렬
+    True: 수렴 성공, False: timeout
+    """
+    period = 1.0 / HEADING_CTRL_HZ
+    stable_cnt = 0
+    prev_err = 0.0
+    start_time = time.time()
+
+    # AMCL 안정화 대기
+    time.sleep(0.3)
+
+    with bridge.amcl_lock:
+        cur_yaw = bridge.amcl_yaw
+
+    if cur_yaw is None:
+        print('[DirectAlign] AMCL 데이터 없음.')
+        return False
+    
+    initial_err = normalize_angle(target_yaw - cur_yaw)
+    print(f'[DirectAlign] 시작: 현재={math.degrees(cur_yaw):.1f}° '
+          f'목표={math.degrees(target_yaw):.1f}° '
+          f'오차={math.degrees(initial_err):.1f}°')
+    
+    if abs(initial_err) < HEADING_TOLERANCE:
+        print(f'[DirectAlign] 이미 허용 범위 내 ({math.degrees(abs(initial_err)):.1f}°)')
+        return True
+    
+    while time.time() - start_time < HEADING_TIMEOUT:
+        with bridge.amcl_lock:
+            cur_yaw = bridge.amcl_yaw
+
+        if cur_yaw is None:
+            time.sleep(period)
+            continue
+
+        err = normalize_angle(target_yaw - cur_yaw)
+
+        # 수렴 판정
+        if abs(err) < HEADING_TOLERANCE:
+            stable_cnt += 1
+            if stable_cnt >= HEADING_STABLE_COUNT:
+                # 정지 명령
+                bridge.cmd_vel_pub.publish(Twist())
+                elapsed = time.time() - start_time
+                print(f'[DirectAlign] 수렴 완료: '
+                      f'{math.degrees(cur_yaw):.1f}° '
+                      f'(오차={math.degrees(err):.2f}°, '
+                      f'{elapsed:.1f}s, '
+                      f'stable={stable_cnt})')
+                return True
+        else:
+            stable_cnt = 0
+
+        # PD
+        d_err = (err - prev_err) * HEADING_CTRL_HZ
+        w = HEADING_KP * err + HEADING_KD * d_err
+
+        # 속도 제한
+        w = max(min(w, HEADING_MAX_W), -HEADING_MAX_W)
+
+        # 최소 속도 보장
+        if 0 < abs(w) < HEADING_MIN_W:
+            w = math.copysign(HEADING_MIN_W, w)
+
+        prev_err = err
+        
+        # cmd_vel
+        msg = Twist()
+        msg.angular.z = w
+        bridge.cmd_vel_pub.publish(msg)
+
+        time.sleep(period)
+        
+    # timeout
+    bridge.cmd_vel_pub.publish(Twist())
+    with bridge.amcl_lock:
+        final_yaw = bridge.amcl_yaw or 0.0
+    final_err = abs(normalize_angle(target_yaw - final_yaw))
+    print(f'[DirectAlign] 타임아웃 ({HEADING_TIMEOUT}s): '
+        f'최종={math.degrees(final_yaw):.1f}° '
+        f'오차={math.degrees(final_err):.1f}°')
+    return False
 
 # def align_heading(navigator, bridge: MissionBridge, wp: PoseStamped):
 #     """
@@ -655,6 +751,16 @@ def main():
         result = navigator.getResult()
         if result == TaskResult.SUCCEEDED:
             print(f'  [WP {i+1}/{total}] 도달 성공 ✓')
+            # 랙 진입 전 heading 정밀 정렬
+            if i == HEADING_ALIGN_WP_IDX:
+                target_yaw = wp_info['goal'][2]
+                print(f'\n[Mission] ═══ 랙 진입 전 heading 정밀 정렬 ═══')
+                success = direct_heading_align(bridge, target_yaw)
+                if success:
+                    print(f'[Mission] heading 정밀 정렬 성공 -> 랙 진입 진행')
+                else:
+                    print(f'[Mission] heading 정밀 정렬 실패 (타임아웃) -> 현재 heading으로 진행')
+                print(f'[Mission] ═════════════════════════════════════')
             i += 1
         elif result == TaskResult.CANCELED:
             print(f'  [WP {i+1}/{total}] 취소됨.')
